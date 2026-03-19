@@ -1,0 +1,36 @@
+{
+  "raw_input": "My 14-year-old daughter has been using ChatGPT to help with her homework. I'm worried it's making her dependent on AI instead of learning. I found your pricing page in Google results but I'm not sure if this is what we need or if there's a better approach. What would you recommend for a parent concerned about this?",
+  "channel": "website",
+  "metadata": {
+    "page_url": "https://itsjen.ai/pricing",
+    "referrer": "google.com",
+    "session_info": {
+      "session_id": "sess_parent_family_002",
+      "first_visit": "2026-03-19T14:22:00Z",
+      "visit_count": 1
+    },
+    "contact": {
+      "name": "Unknown Parent",
+      "email": null,
+      "company": null,
+      "role": "Parent",
+      "logged_in": false,
+      "context": "Likely landed on pricing from Google search for AI and student homework"
+    }
+  },
+  "expected_classification": {
+    "category": "lost_visitor_inquiry",
+    "themes": [5],
+    "sentiment": "concerned",
+    "urgency": "medium",
+    "contact_type": "lost_visitor",
+    "icp_fit": "not_applicable",
+    "context": "Visitor is a parent researching AI impact on child education, not a business user"
+  },
+  "expected_routing": {
+    "action": "concierge_respond",
+    "team": "concierge",
+    "escalated": false,
+    "reason": "lost visitor with genuine concern—provide empathetic redirection and resources, not dismissal"
+  }
+}

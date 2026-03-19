@@ -1,0 +1,37 @@
+{
+  "raw_input": "Hi team, we're three months into using Jen at Meridian Health and we're seeing real efficiency gains. But our CEO is skeptical about AI tools—he's worried about his own job security honestly. I've been asked to demo Jen in our next leadership meeting. Can someone help me prep? What should I highlight to address his concerns about AI replacing people? Specifically, show him how it's a tool for doing better work, not a threat to his role. Thanks!",
+  "channel": "slack",
+  "metadata": {
+    "page_url": null,
+    "referrer": null,
+    "session_info": null,
+    "slack_channel": "C05GZ9CONNECT1",
+    "slack_channel_type": "slack_connect",
+    "slack_user_id": "U0X5Z8Y2LM1",
+    "slack_team_id": "T012AB34CD5",
+    "contact": {
+      "name": "David Chen",
+      "email": "dchen@meridianhealth.com",
+      "company": "Meridian Health",
+      "role": "VP Operations",
+      "customer_since": "2025-12-19",
+      "months_active": 3,
+      "deal_size": "200-seat enterprise"
+    }
+  },
+  "expected_classification": {
+    "category": "customer_success_request",
+    "themes": [2, 3],
+    "sentiment": "positive",
+    "urgency": "medium",
+    "contact_type": "client",
+    "icp_fit": "strong"
+  },
+  "expected_routing": {
+    "action": "route_to_human",
+    "team": "customer_success",
+    "sub_team": "enterprise",
+    "escalated": false,
+    "reason": "existing customer requesting demo support for executive engagement—CSM opportunity"
+  }
+}

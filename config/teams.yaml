@@ -1,0 +1,260 @@
+# Feedback Router: Team Definitions
+# Maps teams to Slack channels and contact information
+
+teams:
+  - team_id: team_engineering
+    name: "Engineering"
+    description: "Software engineering, bug fixes, technical issues"
+    slack_channel: "C_ENGINEERING_FEEDBACK"
+    slack_channel_name: "#engineering-feedback"
+    email: "engineering@itjen.ai"
+    escalation_email: "engineering-lead@itjen.ai"
+    members:
+      - "U_ENGINEERING_LEAD"
+    response_sla_hours: 4
+    response_tier_default: faq_draft
+    on_call_schedule: "engineering_oncall"
+
+  - team_id: team_product
+    name: "Product"
+    description: "Feature requests, roadmap, product strategy"
+    slack_channel: "C_PRODUCT_FEEDBACK"
+    slack_channel_name: "#product-feedback"
+    email: "product@itjen.ai"
+    escalation_email: "vp-product@itjen.ai"
+    members:
+      - "U_PRODUCT_LEAD"
+      - "U_PRODUCT_MANAGER"
+    response_sla_hours: 4
+    response_tier_default: faq_draft
+    on_call_schedule: "product_oncall"
+
+  - team_id: team_support
+    name: "Support"
+    description: "Customer support, learning curve, general feedback"
+    slack_channel: "C_SUPPORT_FEEDBACK"
+    slack_channel_name: "#support-feedback"
+    email: "support@itjen.ai"
+    escalation_email: "support-manager@itjen.ai"
+    members:
+      - "U_SUPPORT_LEAD"
+      - "U_SUPPORT_AGENT_1"
+      - "U_SUPPORT_AGENT_2"
+    response_sla_hours: 2
+    response_tier_default: human_only
+    on_call_schedule: "support_oncall"
+
+  - team_id: team_leadership
+    name: "Leadership"
+    description: "Executive escalations, strategic feedback, security/privacy issues"
+    slack_channel: "C_LEADERSHIP_ESCALATIONS"
+    slack_channel_name: "#leadership-escalations"
+    email: "leadership@itjen.ai"
+    escalation_email: "ceo@itjen.ai"
+    members:
+      - "U_CEO"
+      - "U_VP_PRODUCT"
+      - "U_HEAD_SECURITY"
+    response_sla_hours: 1
+    response_tier_default: human_only
+    on_call_schedule: "leadership_oncall"
+
+  - team_id: team_security
+    name: "Security"
+    description: "Security incidents, privacy concerns, compliance issues"
+    slack_channel: "C_SECURITY_ESCALATIONS"
+    slack_channel_name: "#security-escalations"
+    email: "security@itjen.ai"
+    escalation_email: "head-security@itjen.ai"
+    members:
+      - "U_HEAD_SECURITY"
+      - "U_SECURITY_ENGINEER"
+    response_sla_hours: 1
+    response_tier_default: human_only
+    on_call_schedule: "security_oncall"
+
+  - team_id: team_customer_success
+    name: "Customer Success"
+    description: "Enterprise escalations, account management, customer health"
+    slack_channel: "C_CUSTOMER_SUCCESS_ESCALATIONS"
+    slack_channel_name: "#customer-success-escalations"
+    email: "success@itjen.ai"
+    escalation_email: "vp-success@itjen.ai"
+    members:
+      - "U_CS_MANAGER"
+      - "U_ACCOUNT_MANAGER_1"
+    response_sla_hours: 2
+    response_tier_default: human_only
+    on_call_schedule: "success_oncall"
+
+# Default Routing Fallback
+default_team:
+  team_id: team_support
+  reason: "Support team handles unmatched feedback"
+
+# On-Call Schedules
+# (Integration with PagerDuty, OnCall, or internal scheduling)
+on_call_schedules:
+  - schedule_id: engineering_oncall
+    provider: pagerduty  # or "internal" for custom
+    escalation_policy: "Engineering Escalation Policy"
+
+  - schedule_id: product_oncall
+    provider: pagerduty
+    escalation_policy: "Product Escalation Policy"
+
+  - schedule_id: support_oncall
+    provider: pagerduty
+    escalation_policy: "Support Escalation Policy"
+
+  - schedule_id: leadership_oncall
+    provider: internal
+    primary: "ceo@itjen.ai"
+    backup: "vp-product@itjen.ai"
+
+  - schedule_id: security_oncall
+    provider: internal
+    primary: "head-security@itjen.ai"
+    backup: "security-engineer@itjen.ai"
+
+  - schedule_id: success_oncall
+    provider: pagerduty
+    escalation_policy: "Customer Success Escalation Policy"
+
+# Team-Specific Configuration
+team_config:
+  # Which feedback metadata each team can see
+  visibility:
+    engineering:
+      - contact_info: true
+      - previous_feedback: true
+      - customer_account_type: true
+    product:
+      - contact_info: true
+      - previous_feedback: true
+      - customer_account_type: true
+    support:
+      - contact_info: true
+      - previous_feedback: true
+      - customer_account_type: false  # Privacy
+    leadership:
+      - contact_info: true
+      - previous_feedback: true
+      - customer_account_type: true
+    security:
+      - contact_info: false  # Minimal PII exposure
+      - previous_feedback: false
+      - customer_account_type: false
+
+  # Which actions each team can take
+  permissions:
+    engineering:
+      - can_reclassify: true
+      - can_reroute: true
+      - can_escalate: true
+      - can_close: true
+    product:
+      - can_reclassify: true
+      - can_reroute: true
+      - can_escalate: true
+      - can_close: true
+    support:
+      - can_reclassify: false
+      - can_reroute: false
+      - can_escalate: true
+      - can_close: true
+    leadership:
+      - can_reclassify: true
+      - can_reroute: true
+      - can_escalate: true
+      - can_close: true
+    security:
+      - can_reclassify: false
+      - can_reroute: false
+      - can_escalate: true
+      - can_close: true
+
+# Integration with Slack
+slack_config:
+  workspace_id: "T_WORKSPACE_ID"
+  workspace_name: "ItsJen"
+
+  # Incoming webhooks for posting responses
+  incoming_webhooks:
+    engineering: "https://hooks.slack.com/services/..."
+    product: "https://hooks.slack.com/services/..."
+    support: "https://hooks.slack.com/services/..."
+    leadership: "https://hooks.slack.com/services/..."
+    security: "https://hooks.slack.com/services/..."
+    customer_success: "https://hooks.slack.com/services/..."
+
+# Email Configuration
+email_config:
+  from_address: "feedback@itjen.ai"
+  from_name: "ItsJen Feedback"
+
+  # Reply-to addresses by team
+  reply_to:
+    engineering: "engineering@itjen.ai"
+    product: "product@itjen.ai"
+    support: "support@itjen.ai"
+    leadership: "leadership@itjen.ai"
+    security: "security@itjen.ai"
+    customer_success: "success@itjen.ai"
+
+  # Signature footer
+  signature: |
+    Best regards,
+    The ItsJen Team
+    feedback@itjen.ai
+    https://itjen.ai
+
+# Metrics by Team
+metrics:
+  engineering:
+    avg_response_time: 2.5  # hours
+    response_rate: 98.5     # %
+    satisfaction_score: 4.2 # /5.0
+
+  product:
+    avg_response_time: 3.1
+    response_rate: 97.0
+    satisfaction_score: 4.1
+
+  support:
+    avg_response_time: 1.5
+    response_rate: 99.2
+    satisfaction_score: 4.4
+
+  leadership:
+    avg_response_time: 0.8
+    response_rate: 100.0
+    satisfaction_score: 4.6
+
+# Team Handoff Rules
+# How feedback is transferred between teams if needed
+
+handoff_rules:
+  - from: support
+    to: engineering
+    trigger: "Technical deep-dive required"
+
+  - from: engineering
+    to: support
+    trigger: "Documentation/FAQ needed"
+
+  - from: support
+    to: product
+    trigger: "Feature request or roadmap question"
+
+  - from: product
+    to: leadership
+    trigger: "Strategic decision needed"
+
+  - from: any
+    to: security
+    trigger: "Privacy/security concern detected"
+
+  - from: any
+    to: customer_success
+    trigger: "Enterprise account issue"

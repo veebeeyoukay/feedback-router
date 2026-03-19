@@ -1,0 +1,37 @@
+{
+  "raw_input": "I'm Robert Tran, 54-year-old financial advisor at PNW Financial Advisors—12-person shop in Portland. I've been in this business for 28 years and I'm genuinely worried about AI replacing financial advisors. But I also see clients asking about AI-powered tools, which makes me look outdated if I don't know them. I need something that helps me deliver better analysis (reports are eating my week), protects client data (regulatory nightmare), is easy to learn (I'm not a tech person), helps me understand how to explain AI to clients (career-wise), and honestly, I worry about my kids' future with all this tech. Can Jen help with any of this?",
+  "channel": "website",
+  "metadata": {
+    "page_url": "https://itsjen.ai/product",
+    "referrer": "linkedin.com",
+    "session_info": {
+      "session_id": "sess_robert_tran_003",
+      "first_visit": "2026-03-19T16:45:00Z",
+      "visit_count": 1
+    },
+    "contact": {
+      "name": "Robert Tran",
+      "email": "rtran@pnwfinancial.com",
+      "company": "PNW Financial Advisors",
+      "role": "Financial Advisor",
+      "age": 54,
+      "estimated_team_size": 12,
+      "years_in_industry": 28
+    }
+  },
+  "expected_classification": {
+    "category": "product_inquiry",
+    "themes": [1, 2, 3, 4, 5],
+    "sentiment": "mixed_concerned_but_seeking",
+    "urgency": "medium",
+    "contact_type": "prospect",
+    "icp_fit": "perfect",
+    "multi_theme": true
+  },
+  "expected_routing": {
+    "action": "respond_with_routing",
+    "team": "sales",
+    "escalated": true,
+    "reason": "ideal ICP match with all five themes present—high-value prospect addressing career security and productivity needs"
+  }
+}

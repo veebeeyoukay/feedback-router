@@ -1,0 +1,244 @@
+# Feedback Router: Default Routing Rules
+# These rules determine how feedback flows through the system.
+# Rules are evaluated in priority order (lower number = evaluated first).
+# First rule that matches determines the route. No further rules are evaluated.
+
+# Rule Priority: 1-100 are reserved for core rules, 101+ for custom rules
+
+rules:
+  - rule_id: rule_001
+    name: "Critical Bugs to Engineering"
+    description: "Route critical bugs (priority 0) to engineering team with immediate attention"
+    enabled: true
+    priority: 1
+
+    conditions:
+      - field: classification.category
+        operator: equals
+        value: "bug"
+      - field: classification.priority
+        operator: lte
+        value: 0
+
+    actions:
+      - type: assign_team
+        value: engineering
+      - type: assign_channel
+        value: "C_ENGINEERING_BUGS"
+      - type: set_response_tier
+        value: faq_draft
+      - type: set_priority
+        value: critical
+      - type: escalate
+        value: true
+      - type: send_notification
+        value: ["engineering@itjen.ai"]
+
+  - rule_id: rule_002
+    name: "High Priority Bugs to Engineering"
+    description: "Route priority 1 bugs to engineering with high priority"
+    enabled: true
+    priority: 2
+
+    conditions:
+      - field: classification.category
+        operator: equals
+        value: "bug"
+      - field: classification.priority
+        operator: equals
+        value: 1
+
+    actions:
+      - type: assign_team
+        value: engineering
+      - type: assign_channel
+        value: "C_ENGINEERING_BUGS"
+      - type: set_response_tier
+        value: faq_draft
+      - type: set_priority
+        value: high
+
+  - rule_id: rule_003
+    name: "Feature Requests to Product"
+    description: "Route all feature requests to product team"
+    enabled: true
+    priority: 3
+
+    conditions:
+      - field: classification.category
+        operator: equals
+        value: "feature"
+
+    actions:
+      - type: assign_team
+        value: product
+      - type: assign_channel
+        value: "C_PRODUCT_FEEDBACK"
+      - type: set_response_tier
+        value: faq_draft
+      - type: set_priority
+        value: normal
+
+  - rule_id: rule_004
+    name: "Learning Curve Issues to Support"
+    description: "Learning Curve feedback routes to support for FAQ expansion"
+    enabled: true
+    priority: 4
+
+    conditions:
+      - field: classification.themes
+        operator: includes_any
+        value: ["Learning Curve"]
+      - field: classification.category
+        operator: not_equals
+        value: "bug"
+
+    actions:
+      - type: assign_team
+        value: support
+      - type: assign_channel
+        value: "C_SUPPORT_FEEDBACK"
+      - type: set_response_tier
+        value: faq_draft
+      - type: set_priority
+        value: normal
+
+  - rule_id: rule_005
+    name: "Escalate Repeat Complainers"
+    description: "Flag for leadership if same person complains 3+ times"
+    enabled: true
+    priority: 5
+
+    conditions:
+      - field: classification.category
+        operator: equals
+        value: "complaint"
+      - field: contact.repeat_count
+        operator: gte
+        value: 3
+
+    actions:
+      - type: escalate
+        value: true
+      - type: send_notification
+        value: ["leadership@itjen.ai"]
+      - type: set_priority
+        value: critical
+      - type: add_flag
+        value: "repeat_complainer"
+      - type: set_response_tier
+        value: human_only
+
+  - rule_id: rule_006
+    name: "Privacy & Safety Escalation"
+    description: "Immediately escalate any Privacy & Safety theme to leadership"
+    enabled: true
+    priority: 6
+
+    conditions:
+      - field: classification.themes
+        operator: includes_any
+        value: ["Privacy & Safety"]
+
+    actions:
+      - type: escalate
+        value: true
+      - type: assign_team
+        value: leadership
+      - type: send_notification
+        value: ["ceo@itjen.ai", "legal@itjen.ai"]
+      - type: set_priority
+        value: critical
+      - type: set_response_tier
+        value: human_only
+      - type: add_flag
+        value: "privacy_escalation"
+
+  - rule_id: rule_007
+    name: "Career Security with Negative Sentiment"
+    description: "Career Security + negative sentiment requires human response"
+    enabled: true
+    priority: 7
+
+    conditions:
+      - field: classification.themes
+        operator: includes_any
+        value: ["Career Security"]
+      - field: classification.sentiment
+        operator: equals
+        value: "negative"
+
+    actions:
+      - type: set_response_tier
+        value: human_only
+      - type: add_flag
+        value: "career_concern"
+      - type: send_notification
+        value: ["support@itjen.ai"]
+      - type: set_priority
+        value: high
+
+  - rule_id: rule_008
+    name: "High Confidence Auto-Route"
+    description: "Very high confidence classifications can be auto-routed"
+    enabled: true
+    priority: 8
+
+    conditions:
+      - field: classification.category_confidence
+        operator: gt
+        value: 0.90
+
+    actions:
+      - type: skip_human_review
+        value: true
+
+  - rule_id: rule_009
+    name: "Low Confidence Manual Review"
+    description: "Low confidence classifications require human classifier review"
+    enabled: true
+    priority: 9
+
+    conditions:
+      - field: classification.category_confidence
+        operator: lt
+        value: 0.60
+
+    actions:
+      - type: assign_team
+        value: support
+      - type: set_response_tier
+        value: human_only
+      - type: add_flag
+        value: "classification_review"
+      - type: send_notification
+        value: ["support@itjen.ai"]
+
+  - rule_id: rule_default
+    name: "Default Fallback Routing"
+    description: "Catch-all for unmatched feedback - always at lowest priority"
+    enabled: true
+    priority: 999
+
+    conditions: []
+
+    actions:
+      - type: assign_team
+        value: support
+      - type: assign_channel
+        value: "C_GENERAL_FEEDBACK"
+      - type: set_response_tier
+        value: human_only
+      - type: set_priority
+        value: normal
+      - type: add_flag
+        value: "unmatched_pattern"
+      - type: send_notification
+        value: ["support@itjen.ai"]
+
+# Rule Evaluation Notes:
+# - Rules with the same priority number are treated as alternatives (OR logic)
+# - Rules with different priorities form a sequence (first match wins)
+# - Conditions within a rule are AND logic (all must be true)
+# - Empty conditions array means rule always matches if reached
+# - Use priority 999 as fallback only; all other rules should have priority 1-100

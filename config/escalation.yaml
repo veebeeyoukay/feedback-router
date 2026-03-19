@@ -1,0 +1,108 @@
+# Feedback Router: Escalation Trigger Definitions
+# These triggers cause feedback to be escalated to leadership/urgent queue
+
+escalation_triggers:
+  - trigger_id: escalation_001
+    name: "Competitor Mention"
+    description: "Feedback mentions a competitor by name"
+    enabled: true
+    pattern: "(?i)(CompetitorA|CompetitorB|Platform[XY]Z|AlternativeProduct)"
+    field: content.raw
+    operator: matches_regex
+    severity: high
+    escalate_to: ["leadership@itjen.ai", "product@itjen.ai"]
+    response_tier: human_only
+
+  - trigger_id: escalation_002
+    name: "Security Incident Report"
+    description: "Feedback reports a security vulnerability or breach"
+    enabled: true
+    pattern: "(?i)(breach|hacked|vulnerable|exploit|security.?issue|data.?leak)"
+    field: content.raw
+    operator: matches_regex
+    severity: critical
+    escalate_to: ["security@itjen.ai", "ceo@itjen.ai", "legal@itjen.ai"]
+    response_tier: human_only
+
+  - trigger_id: escalation_003
+    name: "Regulatory/Compliance Concern"
+    description: "Feedback mentions GDPR, HIPAA, or other regulations"
+    enabled: true
+    pattern: "(?i)(GDPR|HIPAA|SOC.?2|compliance|regulation|legal|audit)"
+    field: content.raw
+    operator: matches_regex
+    severity: high
+    escalate_to: ["legal@itjen.ai", "ceo@itjen.ai"]
+    response_tier: human_only
+
+  - trigger_id: escalation_004
+    name: "Enterprise Customer Issue"
+    description: "Customer is enterprise account and issue affects business"
+    enabled: true
+    conditions:
+      - field: contact.account_type
+        operator: equals
+        value: "enterprise"
+      - field: classification.sentiment
+        operator: equals
+        value: "negative"
+    severity: high
+    escalate_to: ["leadership@itjen.ai", "success@itjen.ai"]
+    response_tier: human_only
+
+  - trigger_id: escalation_005
+    name: "Critical Bug with Impact"
+    description: "Bug that blocks core functionality or causes data loss"
+    enabled: true
+    pattern: "(?i)(crash|data.?loss|can.?not|blocking|broken|fatal)"
+    field: content.raw
+    operator: matches_regex
+    conditions:
+      - field: classification.category
+        operator: equals
+        value: "bug"
+      - field: classification.priority
+        operator: lte
+        value: 1
+    severity: critical
+    escalate_to: ["engineering@itjen.ai"]
+    response_tier: complex_draft
+
+  - trigger_id: escalation_006
+    name: "Repeat Issue"
+    description: "Same customer reporting same issue multiple times"
+    enabled: true
+    conditions:
+      - field: contact.repeat_count
+        operator: gte
+        value: 3
+      - field: classification.sentiment
+        operator: equals
+        value: "negative"
+    severity: medium
+    escalate_to: ["support@itjen.ai"]
+    response_tier: human_only
+
+  - trigger_id: escalation_007
+    name: "Privacy Concern"
+    description: "Any Privacy & Safety theme feedback"
+    enabled: true
+    conditions:
+      - field: classification.themes
+        operator: includes_any
+        value: ["Privacy & Safety"]
+    severity: high
+    escalate_to: ["security@itjen.ai", "legal@itjen.ai"]
+    response_tier: human_only
+
+# Escalation Priority Levels:
+# critical: Page on-call immediately, stop other work
+# high: Handle within 2 hours, notify team lead
+# medium: Handle within 4 hours, add to priority queue
+# low: Handle within business day, standard queue
+
+# Escalation Response Rules:
+# - Each escalation trigger adds a flag: escalation_[trigger_id]
+# - Customer support automatically upgrades response SLA
+# - If multiple triggers match, take highest severity
+# - Escalations always route to human, never auto-respond

@@ -1,0 +1,36 @@
+{
+  "raw_input": "Hi, we're Meridian Health—200-person healthcare group in the Midwest. Really interested in ItsJen but our legal/compliance team needs to understand data handling, encryption, and whether patient data could ever be exposed. HIPAA compliance is non-negotiable. Can we get a detailed security brief? Thanks, David Chen, VP Ops.",
+  "channel": "slack",
+  "metadata": {
+    "page_url": null,
+    "referrer": null,
+    "session_info": null,
+    "slack_channel": "C05GZ9K3NQ9",
+    "slack_user_id": "U0X5Z8Y2LM1",
+    "slack_team_id": "T012AB34CD5",
+    "contact": {
+      "name": "David Chen",
+      "email": "dchen@meridianhealth.com",
+      "company": "Meridian Health",
+      "role": "VP Operations",
+      "estimated_team_size": 200,
+      "estimated_deal_size": "200-seat enterprise deal"
+    }
+  },
+  "expected_classification": {
+    "category": "compliance_security_inquiry",
+    "themes": [4],
+    "sentiment": "neutral",
+    "urgency": "high",
+    "contact_type": "prospect",
+    "icp_fit": "strong",
+    "compliance_flag": true
+  },
+  "expected_routing": {
+    "action": "escalate_to_human",
+    "team": "sales",
+    "sub_team": "enterprise",
+    "escalated": true,
+    "reason": "enterprise-scale healthcare customer with compliance/legal requirements"
+  }
+}

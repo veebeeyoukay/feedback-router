@@ -1,0 +1,87 @@
+# Default configuration file
+debug: false
+log_level: INFO
+environment: development
+
+database:
+  url: "postgresql://user:password@localhost/feedback_router"
+  pool_size: 10
+  max_overflow: 20
+  echo: false
+
+redis:
+  host: localhost
+  port: 6379
+  db: 0
+  password: null
+
+slack:
+  bot_token: "${SLACK_BOT_TOKEN}"
+  signing_secret: "${SLACK_SIGNING_SECRET}"
+  app_token: "${SLACK_APP_TOKEN}"
+  monitored_channels:
+    - feedback
+    - feature-requests
+    - bugs
+    - complaints
+    - customer-feedback
+    - support
+
+webhook:
+  website_secret: "${WEBHOOK_SECRET}"
+  rate_limit: 100
+  rate_limit_window: 60
+
+# Team configuration
+teams:
+  sales:
+    name: Sales Team
+    description: Sales team for prospects and lost customers
+    categories:
+      - lost
+      - suggestion
+    channels:
+      - email
+      - slack
+
+  support:
+    name: Support Team
+    description: Support team for questions and bugs
+    categories:
+      - bug
+      - question
+    channels:
+      - email
+      - slack
+      - intercom
+
+  product:
+    name: Product Team
+    description: Product team for features
+    categories:
+      - feature
+      - suggestion
+    channels:
+      - slack
+      - email
+
+  customer_success:
+    name: Customer Success Team
+    description: CS team for complaints and concerns
+    categories:
+      - complaint
+      - escalation
+    channels:
+      - email
+      - slack
+
+# Category to team mappings
+category_mappings:
+  bug: support
+  feature: product
+  question: support
+  complaint: customer_success
+  praise: customer_success
+  suggestion: product
+  lost: sales
+  escalation: management

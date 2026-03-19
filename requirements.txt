@@ -1,0 +1,66 @@
+# Feedback Router: Python Dependencies
+
+# Core Framework & Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database & ORM
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+
+# Async & Task Queue
+celery==5.3.4
+redis==5.0.1
+kombu==5.3.4
+
+# Slack Integration
+slack-bolt==1.18.0
+slack-sdk==3.26.0
+
+# AI/LLM
+anthropic==0.8.1
+
+# HTTP & Web
+httpx==0.25.2
+aiohttp==3.9.1
+requests==2.31.0
+
+# Data Processing & Utilities
+pyyaml==6.0.1
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+pytz==2023.3
+uuid6==1.0.3
+
+# Logging & Observers
+structlog==23.2.0
+python-json-logger==2.0.7
+
+# Security
+cryptography==41.0.7
+pyjwt==2.8.1
+passlib[bcrypt]==1.7.4
+
+# Validation & Serialization
+marshmallow==3.20.1
+email-validator==2.1.0
+
+# Monitoring & Observability
+sentry-sdk==1.39.1
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-exporter-otlp==0.40b0
+
+# Configuration
+dynaconf==3.2.4
+
+# Utilities
+tenacity==8.2.3
+cachetools==5.3.2
+python-multipart==0.0.6
+
+# Note: Development dependencies are in requirements-dev.txt
+# Install with: pip install -r requirements.txt -r requirements-dev.txt
