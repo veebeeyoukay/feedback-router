@@ -1,277 +1,410 @@
-"""Unit tests for feedback classification engine."""
-import json
+"""Unit tests for classification modules: sentiment, themes, categories, contact."""
+
 import pytest
-from pathlib import Path
 
-# Load test fixtures
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-
-
-@pytest.fixture
-def prospect_productivity_fixture():
-    """Load prospect productivity fixture."""
-    with open(FIXTURES_DIR / "prospect_productivity.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def privacy_healthcare_fixture():
-    """Load privacy/healthcare fixture."""
-    with open(FIXTURES_DIR / "privacy_healthcare.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def lost_visitor_family_fixture():
-    """Load lost visitor/family fixture."""
-    with open(FIXTURES_DIR / "lost_visitor_family.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def client_career_security_fixture():
-    """Load client career security fixture."""
-    with open(FIXTURES_DIR / "client_career_security.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def all_themes_financial_fixture():
-    """Load all themes financial fixture."""
-    with open(FIXTURES_DIR / "all_themes_financial.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture(
-    params=[
-        "prospect_productivity_fixture",
-        "privacy_healthcare_fixture",
-        "lost_visitor_family_fixture",
-        "client_career_security_fixture",
-        "all_themes_financial_fixture",
-    ]
+from src.classification.sentiment import (
+    analyze_sentiment,
+    detect_urgency,
+    PolarityEnum,
+    UrgencyEnum,
 )
-def all_fixtures(request):
-    """Parametrized fixture providing all test scenarios."""
-    return request.getfixturevalue(request.param)
+from src.classification.themes import (
+    tag_themes,
+    get_theme_definition,
+    get_all_themes,
+    ThemeEnum,
+)
+from src.classification.categories import (
+    get_category_definition,
+    get_all_categories,
+    CategoryEnum,
+)
+from src.classification.contact import ContactIdentifier, ContactTypeEnum
 
 
-class TestCategoryAssignment:
-    """Test category assignment for feedback items."""
+# ===========================================================================
+# Sentiment Analysis tests
+# ===========================================================================
 
-    def test_prospect_productivity_category(self, prospect_productivity_fixture):
-        """Category for prospect with productivity need should be product_inquiry."""
-        expected = prospect_productivity_fixture["expected_classification"]["category"]
-        assert expected == "product_inquiry"
+class TestAnalyzeSentiment:
+    """Test analyze_sentiment() function."""
 
-    def test_privacy_healthcare_category(self, privacy_healthcare_fixture):
-        """Category for healthcare compliance inquiry should be compliance_security_inquiry."""
-        expected = privacy_healthcare_fixture["expected_classification"]["category"]
-        assert expected == "compliance_security_inquiry"
+    def test_positive_text(self):
+        polarity, intensity, urgency = analyze_sentiment(
+            "I love this product! It's amazing and excellent."
+        )
+        assert polarity == PolarityEnum.POSITIVE
+        assert intensity > 0.3
 
-    def test_lost_visitor_category(self, lost_visitor_family_fixture):
-        """Category for lost visitor should be lost_visitor_inquiry."""
-        expected = lost_visitor_family_fixture["expected_classification"]["category"]
-        assert expected == "lost_visitor_inquiry"
+    def test_negative_text(self):
+        polarity, intensity, urgency = analyze_sentiment(
+            "This is terrible. The product is broken and useless."
+        )
+        assert polarity == PolarityEnum.NEGATIVE
+        assert intensity > 0.3
 
-    def test_customer_success_category(self, client_career_security_fixture):
-        """Category for existing customer request should be customer_success_request."""
-        expected = client_career_security_fixture["expected_classification"]["category"]
-        assert expected == "customer_success_request"
+    def test_neutral_text(self):
+        polarity, intensity, urgency = analyze_sentiment(
+            "I submitted the document at 3pm on Tuesday."
+        )
+        assert polarity == PolarityEnum.NEUTRAL
+        assert intensity == 0.5  # default for no signals
 
-    def test_product_inquiry_category(self, all_themes_financial_fixture):
-        """Category for financial advisor inquiry should be product_inquiry."""
-        expected = all_themes_financial_fixture["expected_classification"]["category"]
-        assert expected == "product_inquiry"
+    def test_mixed_text(self):
+        polarity, intensity, urgency = analyze_sentiment(
+            "I love the design but hate the pricing."
+        )
+        assert polarity == PolarityEnum.MIXED
 
+    def test_empty_text_returns_neutral(self):
+        polarity, intensity, urgency = analyze_sentiment("")
+        assert polarity == PolarityEnum.NEUTRAL
+        assert intensity == 0.5
+        assert urgency == UrgencyEnum.MEDIUM
 
-class TestThemeTagging:
-    """Test ICP theme identification (1-5)."""
+    def test_intensifiers_boost_intensity(self):
+        _, base_intensity, _ = analyze_sentiment("The product is great.")
+        _, boosted_intensity, _ = analyze_sentiment("The product is really extremely great.")
+        assert boosted_intensity > base_intensity
 
-    def test_productivity_theme_detected(self, prospect_productivity_fixture):
-        """Theme 1 (Productivity) should be detected in prospect message."""
-        themes = prospect_productivity_fixture["expected_classification"]["themes"]
-        assert 1 in themes, "Theme 1 (Productivity) not detected"
+    def test_negative_intensifiers_boost_intensity(self):
+        _, base_intensity, _ = analyze_sentiment("This is bad.")
+        _, boosted_intensity, _ = analyze_sentiment("This is bad, never works, always crashes.")
+        assert boosted_intensity > base_intensity
 
-    def test_learning_curve_theme_detected(self, prospect_productivity_fixture):
-        """Theme 3 (Learning Curve) should be detected in prospect message."""
-        themes = prospect_productivity_fixture["expected_classification"]["themes"]
-        assert 3 in themes, "Theme 3 (Learning Curve) not detected"
+    def test_intensity_capped_at_one(self):
+        # Pile on many signals and intensifiers
+        text = " ".join([
+            "love great awesome excellent amazing wonderful fantastic perfect best",
+            "really very extremely incredibly absolutely totally completely",
+        ])
+        _, intensity, _ = analyze_sentiment(text)
+        assert 0.0 <= intensity <= 1.0
 
-    def test_privacy_theme_detected(self, privacy_healthcare_fixture):
-        """Theme 4 (Privacy) should be detected in healthcare inquiry."""
-        themes = privacy_healthcare_fixture["expected_classification"]["themes"]
-        assert 4 in themes, "Theme 4 (Privacy) not detected"
+    def test_intensity_minimum_zero(self):
+        _, intensity, _ = analyze_sentiment("a")
+        assert intensity >= 0.0
 
-    def test_family_theme_detected(self, lost_visitor_family_fixture):
-        """Theme 5 (Family) should be detected in parent inquiry."""
-        themes = lost_visitor_family_fixture["expected_classification"]["themes"]
-        assert 5 in themes, "Theme 5 (Family) not detected"
-
-    def test_career_security_theme_detected(self, client_career_security_fixture):
-        """Theme 2 (Career Security) should be detected in CEO demo request."""
-        themes = client_career_security_fixture["expected_classification"]["themes"]
-        assert 2 in themes, "Theme 2 (Career Security) not detected"
-
-    def test_all_five_themes_detected(self, all_themes_financial_fixture):
-        """All five themes should be detected in financial advisor message."""
-        themes = all_themes_financial_fixture["expected_classification"]["themes"]
-        expected_themes = [1, 2, 3, 4, 5]
-        for theme in expected_themes:
-            assert (
-                theme in themes
-            ), f"Theme {theme} not detected in all-themes fixture"
-
-    def test_theme_count_reasonable(self, all_fixtures):
-        """Theme count should be between 1 and 5."""
-        themes = all_fixtures["expected_classification"]["themes"]
-        assert 1 <= len(themes) <= 5, "Invalid number of themes"
-        assert all(1 <= t <= 5 for t in themes), "Theme numbers out of range"
+    def test_returns_tuple_of_three(self):
+        result = analyze_sentiment("some text")
+        assert len(result) == 3
 
 
-class TestSentimentAnalysis:
-    """Test sentiment classification."""
+class TestDetectUrgency:
+    """Test detect_urgency() function."""
 
-    def test_prospect_positive_sentiment(self, prospect_productivity_fixture):
-        """Prospect inquiry should have positive sentiment."""
-        sentiment = prospect_productivity_fixture["expected_classification"]["sentiment"]
-        assert sentiment == "positive"
+    def test_critical_urgency_signals(self):
+        urgency = detect_urgency("this is a critical emergency", PolarityEnum.NEUTRAL, 0.5)
+        assert urgency == UrgencyEnum.CRITICAL
 
-    def test_healthcare_neutral_sentiment(self, privacy_healthcare_fixture):
-        """Healthcare compliance inquiry should be neutral (business-like)."""
-        sentiment = privacy_healthcare_fixture["expected_classification"]["sentiment"]
-        assert sentiment == "neutral"
+    def test_security_is_critical(self):
+        urgency = detect_urgency("there has been a security breach", PolarityEnum.NEGATIVE, 0.8)
+        assert urgency == UrgencyEnum.CRITICAL
 
-    def test_parent_concerned_sentiment(self, lost_visitor_family_fixture):
-        """Parent inquiry should reflect concern."""
-        sentiment = lost_visitor_family_fixture["expected_classification"]["sentiment"]
-        assert sentiment == "concerned"
+    def test_blocking_is_critical(self):
+        urgency = detect_urgency("this is blocking our release", PolarityEnum.NEGATIVE, 0.7)
+        assert urgency == UrgencyEnum.CRITICAL
 
-    def test_client_positive_sentiment(self, client_career_security_fixture):
-        """Existing customer request should have positive sentiment."""
-        sentiment = client_career_security_fixture["expected_classification"]["sentiment"]
-        assert sentiment == "positive"
+    def test_high_urgency_from_multiple_signals(self):
+        urgency = detect_urgency(
+            "this is important and must be done soon",
+            PolarityEnum.NEUTRAL,
+            0.5,
+        )
+        assert urgency == UrgencyEnum.HIGH
 
-    def test_financial_advisor_mixed_sentiment(self, all_themes_financial_fixture):
-        """Financial advisor expressing concern but seeking help should be mixed."""
-        sentiment = all_themes_financial_fixture["expected_classification"]["sentiment"]
-        assert "concerned" in sentiment or "mixed" in sentiment
+    def test_high_urgency_from_negative_intensity(self):
+        urgency = detect_urgency(
+            "the widget is a poor implementation",
+            PolarityEnum.NEGATIVE,
+            0.75,
+        )
+        assert urgency == UrgencyEnum.HIGH
 
+    def test_medium_urgency_signals(self):
+        urgency = detect_urgency(
+            "it would be helpful if you could look into this",
+            PolarityEnum.NEUTRAL,
+            0.4,
+        )
+        assert urgency == UrgencyEnum.MEDIUM
 
-class TestContactTypeIdentification:
-    """Test contact type classification."""
+    def test_low_urgency_default(self):
+        urgency = detect_urgency(
+            "just sharing some thoughts on the color scheme",
+            PolarityEnum.POSITIVE,
+            0.3,
+        )
+        assert urgency == UrgencyEnum.LOW
 
-    def test_prospect_contact_type(self, prospect_productivity_fixture):
-        """First-time visitor from Deloitte should be classified as prospect."""
-        contact_type = prospect_productivity_fixture["expected_classification"][
-            "contact_type"
-        ]
-        assert contact_type == "prospect"
+    def test_ceo_is_critical(self):
+        urgency = detect_urgency("our ceo is asking about this", PolarityEnum.NEUTRAL, 0.5)
+        assert urgency == UrgencyEnum.CRITICAL
 
-    def test_prospect_contact_type_healthcare(self, privacy_healthcare_fixture):
-        """Healthcare buyer from Slack should be classified as prospect."""
-        contact_type = privacy_healthcare_fixture["expected_classification"][
-            "contact_type"
-        ]
-        assert contact_type == "prospect"
-
-    def test_lost_visitor_contact_type(self, lost_visitor_family_fixture):
-        """Unlogged-in parent should be classified as lost_visitor."""
-        contact_type = lost_visitor_family_fixture["expected_classification"][
-            "contact_type"
-        ]
-        assert contact_type == "lost_visitor"
-
-    def test_client_contact_type(self, client_career_security_fixture):
-        """Customer in Slack Connect should be classified as client."""
-        contact_type = client_career_security_fixture["expected_classification"][
-            "contact_type"
-        ]
-        assert contact_type == "client"
-
-    def test_prospect_contact_type_financial(self, all_themes_financial_fixture):
-        """Financial advisor with no prior relationship should be prospect."""
-        contact_type = all_themes_financial_fixture["expected_classification"][
-            "contact_type"
-        ]
-        assert contact_type == "prospect"
+    def test_asap_is_critical(self):
+        urgency = detect_urgency("we need this fixed asap", PolarityEnum.NEGATIVE, 0.6)
+        assert urgency == UrgencyEnum.CRITICAL
 
 
-class TestIcpFitAssessment:
-    """Test ICP fit scoring."""
+# ===========================================================================
+# Theme detection tests
+# ===========================================================================
 
-    def test_strong_icp_fit_prospect(self, prospect_productivity_fixture):
-        """Consulting manager at established firm is strong ICP fit."""
-        icp_fit = prospect_productivity_fixture["expected_classification"]["icp_fit"]
-        assert icp_fit == "strong"
+class TestTagThemes:
+    """Test tag_themes() function."""
 
-    def test_strong_icp_fit_healthcare(self, privacy_healthcare_fixture):
-        """Healthcare operations leader is strong ICP fit."""
-        icp_fit = privacy_healthcare_fixture["expected_classification"]["icp_fit"]
-        assert icp_fit == "strong"
+    def test_pricing_theme(self):
+        themes = tag_themes("Your pricing is too expensive. We can't afford this subscription.")
+        assert "pricing_sensitivity" in themes
 
-    def test_not_applicable_lost_visitor(self, lost_visitor_family_fixture):
-        """Parent is not ICP (consumer, not business user)."""
-        icp_fit = lost_visitor_family_fixture["expected_classification"]["icp_fit"]
-        assert icp_fit == "not_applicable"
+    def test_competitive_pressure_theme(self):
+        themes = tag_themes("We are considering switching to a competitor.")
+        assert "competitive_pressure" in themes
 
-    def test_perfect_icp_fit_financial(self, all_themes_financial_fixture):
-        """54-year-old financial advisor is perfect ICP match."""
-        icp_fit = all_themes_financial_fixture["expected_classification"]["icp_fit"]
-        assert icp_fit == "perfect"
+    def test_feature_parity_theme(self):
+        themes = tag_themes("This feature is missing. We need this capability.")
+        assert "feature_parity" in themes
+
+    def test_implementation_friction_theme(self):
+        themes = tag_themes("The setup was very difficult and the integration is complex.")
+        assert "implementation_friction" in themes
+
+    def test_support_expectations_theme(self):
+        themes = tag_themes("Support response time is slow and the service is poor.")
+        assert "support_expectations" in themes
+
+    def test_multiple_themes_detected(self):
+        themes = tag_themes(
+            "The price is too expensive compared to competitors. Also the integration is difficult."
+        )
+        assert "pricing_sensitivity" in themes
+        assert "competitive_pressure" in themes or "implementation_friction" in themes
+
+    def test_empty_text_returns_empty(self):
+        themes = tag_themes("")
+        assert themes == []
+
+    def test_no_themes_returns_empty(self):
+        themes = tag_themes("I enjoyed the weather today.")
+        assert themes == []
+
+    def test_min_keyword_matches_parameter(self):
+        # With a higher threshold, fewer themes should match
+        themes_low = tag_themes("price cost budget", min_keyword_matches=1)
+        themes_high = tag_themes("price cost budget", min_keyword_matches=5)
+        assert len(themes_low) >= len(themes_high)
+
+    def test_phrase_matches_weighted_higher(self):
+        # Phrase like "too expensive" should count as 2 keyword matches
+        themes = tag_themes("too expensive", min_keyword_matches=2)
+        assert "pricing_sensitivity" in themes
+
+    def test_themes_returned_sorted(self):
+        themes = tag_themes(
+            "price is too expensive, competitor offers better value, and your support is slow"
+        )
+        assert themes == sorted(themes)
 
 
-class TestUrgencyAssessment:
-    """Test urgency scoring."""
+class TestGetThemeDefinition:
+    """Test get_theme_definition() function."""
 
-    def test_high_urgency_deadline(self, prospect_productivity_fixture):
-        """Prospect with Thursday deadline should be high urgency."""
-        urgency = prospect_productivity_fixture["expected_classification"]["urgency"]
-        assert urgency == "high"
+    def test_returns_definition_for_each_theme(self):
+        for theme in ThemeEnum:
+            definition = get_theme_definition(theme)
+            assert definition.name is not None
+            assert len(definition.signal_keywords) > 0
+            assert len(definition.signal_phrases) > 0
 
-    def test_high_urgency_compliance(self, privacy_healthcare_fixture):
-        """Healthcare compliance inquiry should be high urgency."""
-        urgency = privacy_healthcare_fixture["expected_classification"]["urgency"]
-        assert urgency == "high"
+    def test_pricing_sensitivity_definition(self):
+        definition = get_theme_definition(ThemeEnum.PRICING_SENSITIVITY)
+        assert "pricing" in definition.name.lower() or "pricing" in definition.description.lower()
+        assert "price" in definition.signal_keywords
 
-    def test_medium_urgency_lost_visitor(self, lost_visitor_family_fixture):
-        """Lost visitor concern is medium urgency (not immediate purchase)."""
-        urgency = lost_visitor_family_fixture["expected_classification"]["urgency"]
-        assert urgency == "medium"
-
-    def test_medium_urgency_customer_request(self, client_career_security_fixture):
-        """Customer support request is medium urgency."""
-        urgency = client_career_security_fixture["expected_classification"]["urgency"]
-        assert urgency == "medium"
+    def test_invalid_theme_raises_error(self):
+        with pytest.raises(KeyError):
+            get_theme_definition("not_a_theme")
 
 
-class TestClassificationConsistency:
-    """Test that classifications are internally consistent."""
+class TestGetAllThemes:
+    """Test get_all_themes() function."""
 
-    def test_contact_type_matches_metadata(self, prospect_productivity_fixture):
-        """Contact type classification should match metadata indicators."""
-        metadata = prospect_productivity_fixture["metadata"]["contact"]
-        contact_type = prospect_productivity_fixture["expected_classification"][
-            "contact_type"
-        ]
-        # First visitor should be prospect
-        assert (
-            contact_type == "prospect"
-        ), "First-time contact should be prospect"
+    def test_returns_all_five_themes(self):
+        all_themes = get_all_themes()
+        assert len(all_themes) == 5
 
-    def test_client_has_customer_since(self, client_career_security_fixture):
-        """Client classification should have customer_since in metadata."""
-        metadata = client_career_security_fixture["metadata"]["contact"]
-        assert "customer_since" in metadata, "Client should have customer_since"
+    def test_all_enum_values_present(self):
+        all_themes = get_all_themes()
+        for theme in ThemeEnum:
+            assert theme in all_themes
 
-    def test_lost_visitor_not_logged_in(self, lost_visitor_family_fixture):
-        """Lost visitor should not be logged in."""
-        metadata = lost_visitor_family_fixture["metadata"]["contact"]
-        assert (
-            metadata.get("logged_in") is False
-        ), "Lost visitor should not be logged in"
 
-    def test_themes_match_sentiment(self, all_themes_financial_fixture):
-        """Financial advisor's mixed sentiment should align with multiple themes."""
-        themes = all_themes_financial_fixture["expected_classification"]["themes"]
-        assert len(themes) > 1, "Mixed sentiment should have multiple themes"
+# ===========================================================================
+# Category definition tests
+# ===========================================================================
+
+class TestGetCategoryDefinition:
+    """Test get_category_definition() function."""
+
+    def test_returns_definition_for_each_category(self):
+        for category in CategoryEnum:
+            definition = get_category_definition(category)
+            assert definition.name is not None
+            assert len(definition.description) > 0
+            assert len(definition.examples) > 0
+            assert len(definition.keywords) > 0
+
+    def test_bug_category_definition(self):
+        definition = get_category_definition(CategoryEnum.BUG)
+        assert "bug" in definition.keywords
+        assert "error" in definition.keywords
+
+    def test_feature_category_definition(self):
+        definition = get_category_definition(CategoryEnum.FEATURE)
+        assert "feature" in definition.keywords
+
+    def test_complaint_category_definition(self):
+        definition = get_category_definition(CategoryEnum.COMPLAINT)
+        assert "frustrated" in definition.keywords or "complaint" in definition.keywords
+
+    def test_escalation_category_definition(self):
+        definition = get_category_definition(CategoryEnum.ESCALATION)
+        assert "urgent" in definition.keywords or "critical" in definition.keywords
+
+    def test_invalid_category_raises_error(self):
+        with pytest.raises(KeyError):
+            get_category_definition("not_a_category")
+
+
+class TestGetAllCategories:
+    """Test get_all_categories() function."""
+
+    def test_returns_all_categories(self):
+        all_categories = get_all_categories()
+        assert len(all_categories) == len(CategoryEnum)
+
+    def test_all_enum_values_present(self):
+        all_categories = get_all_categories()
+        for category in CategoryEnum:
+            assert category in all_categories
+
+
+# ===========================================================================
+# Contact Identifier tests
+# ===========================================================================
+
+class TestContactIdentifier:
+    """Test ContactIdentifier class."""
+
+    def test_identify_prospect_by_default(self):
+        identifier = ContactIdentifier()
+        contact_type, contact_id, account_id = identifier.identify_contact(
+            text="I'm interested in your product."
+        )
+        assert contact_type == ContactTypeEnum.PROSPECT
+
+    def test_identify_client_by_account_id(self):
+        identifier = ContactIdentifier()
+        contact_type, contact_id, account_id = identifier.identify_contact(
+            text="Some feedback",
+            account_id="acct_123",
+        )
+        assert contact_type == ContactTypeEnum.CLIENT
+        assert account_id == "acct_123"
+
+    def test_identify_internal_from_text(self):
+        identifier = ContactIdentifier()
+        contact_type, _, _ = identifier.identify_contact(
+            text="Our internal team has noticed performance issues."
+        )
+        assert contact_type == ContactTypeEnum.INTERNAL
+
+    def test_identify_internal_from_colleague_text(self):
+        identifier = ContactIdentifier()
+        contact_type, _, _ = identifier.identify_contact(
+            text="My colleague reported that the employee portal is broken."
+        )
+        assert contact_type == ContactTypeEnum.INTERNAL
+
+    def test_identify_churned_from_churn_text(self):
+        identifier = ContactIdentifier()
+        contact_type, _, _ = identifier.identify_contact(
+            text="We are going to cancel our subscription."
+        )
+        assert contact_type == ContactTypeEnum.CHURNED
+
+    def test_identify_churned_from_switching_text(self):
+        identifier = ContactIdentifier()
+        contact_type, _, _ = identifier.identify_contact(
+            text="We are switching to Competitor X."
+        )
+        assert contact_type == ContactTypeEnum.CHURNED
+
+    def test_identify_known_email_from_database(self):
+        contact_db = {
+            "john@acme.com": {
+                "type": ContactTypeEnum.CLIENT,
+                "account_id": "acct_acme",
+            }
+        }
+        identifier = ContactIdentifier(contact_db=contact_db)
+        contact_type, contact_id, account_id = identifier.identify_contact(
+            text="Some feedback",
+            email="john@acme.com",
+        )
+        assert contact_type == ContactTypeEnum.CLIENT
+        assert account_id == "acct_acme"
+
+    def test_unknown_email_not_in_database(self):
+        contact_db = {
+            "known@acme.com": {"type": ContactTypeEnum.CLIENT, "account_id": "acct_1"},
+        }
+        identifier = ContactIdentifier(contact_db=contact_db)
+        contact_type, _, _ = identifier.identify_contact(
+            text="Hi, I saw your ad.",
+            email="stranger@gmail.com",
+        )
+        assert contact_type == ContactTypeEnum.PROSPECT
+
+
+class TestContactIdentifierExtractEmail:
+    """Test ContactIdentifier.extract_email()."""
+
+    def test_extract_email_simple(self):
+        identifier = ContactIdentifier()
+        email = identifier.extract_email("Please contact me at john@example.com for details.")
+        assert email == "john@example.com"
+
+    def test_extract_email_with_subdomain(self):
+        identifier = ContactIdentifier()
+        email = identifier.extract_email("Send to user@mail.company.co.uk")
+        assert email == "user@mail.company.co.uk"
+
+    def test_no_email_returns_none(self):
+        identifier = ContactIdentifier()
+        email = identifier.extract_email("No email here")
+        assert email is None
+
+    def test_extract_first_email_from_multiple(self):
+        identifier = ContactIdentifier()
+        email = identifier.extract_email("Reach me at a@b.com or c@d.com")
+        assert email in ("a@b.com", "c@d.com")
+
+
+class TestContactIdentifierExtractSlackHandle:
+    """Test ContactIdentifier.extract_slack_handle()."""
+
+    def test_extract_slack_handle(self):
+        identifier = ContactIdentifier()
+        handle = identifier.extract_slack_handle("Hey @john.doe can you check?")
+        assert handle == "john.doe"
+
+    def test_no_slack_handle_returns_none(self):
+        identifier = ContactIdentifier()
+        handle = identifier.extract_slack_handle("No handle in this text")
+        assert handle is None
+
+    def test_extract_handle_with_hyphens(self):
+        identifier = ContactIdentifier()
+        handle = identifier.extract_slack_handle("cc @user-name-123")
+        assert handle == "user-name-123"

@@ -15,15 +15,23 @@ from src.classification.themes import tag_themes
 class ClassifierAgent:
     """Classifies feedback using LLM with fallback to rules."""
 
-    def __init__(self, llm_client: Optional[object] = None, use_llm: bool = True):
+    def __init__(self, llm_client=None, use_llm: bool = True):
         """Initialize classifier agent.
 
         Args:
             llm_client: Optional LLM client (e.g., Anthropic)
             use_llm: Whether to attempt LLM classification
         """
-        self.llm_client = llm_client
         self.use_llm = use_llm
+        if use_llm and llm_client is None:
+            try:
+                import anthropic
+                self.llm_client = anthropic.Anthropic()
+            except Exception:
+                self.llm_client = None
+                self.use_llm = False
+        else:
+            self.llm_client = llm_client
 
     def classify(self, feedback_item: FeedbackItem) -> FeedbackClassification:
         """Classify feedback item.
@@ -55,10 +63,96 @@ class ClassifierAgent:
         Returns:
             Classification or None if unavailable
         """
-        # This would call Claude API with structured output
-        # For now, returns None to trigger fallback
-        # Implementation would use anthropic client
-        return None
+        try:
+            prompt = (
+                "You are a feedback classification system. Analyze the following customer feedback "
+                "and return a JSON object with these fields:\n"
+                "\n"
+                "- category: one of: bug, feature, question, complaint, praise, suggestion, lost, escalation\n"
+                "- sentiment_polarity: one of: positive, negative, neutral, mixed\n"
+                "- sentiment_intensity: float between 0 and 1\n"
+                "- urgency: one of: low, medium, high, critical\n"
+                "- business_impact: a short text description of the business impact\n"
+                "- themes: a list of relevant theme strings\n"
+                "- confidence: float between 0 and 1 indicating your classification confidence\n"
+                "\n"
+                "Return ONLY valid JSON, no other text.\n"
+                "\n"
+                f"Feedback text: {feedback_item.content.raw_text}"
+            )
+
+            message = self.llm_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1024,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+
+            # Extract text content from the response
+            response_text = message.content[0].text
+
+            # Parse JSON from the response, handling possible markdown code blocks
+            response_text = response_text.strip()
+            if response_text.startswith("```"):
+                # Remove markdown code block wrapping
+                lines = response_text.split("\n")
+                # Drop first line (```json or ```) and last line (```)
+                lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                response_text = "\n".join(lines)
+
+            result = json.loads(response_text)
+
+            # Map the response to a FeedbackClassification
+            polarity_map = {
+                "positive": PolarityEnum.POSITIVE,
+                "negative": PolarityEnum.NEGATIVE,
+                "neutral": PolarityEnum.NEUTRAL,
+                "mixed": PolarityEnum.MIXED,
+            }
+            urgency_map = {
+                "low": UrgencyEnum.LOW,
+                "medium": UrgencyEnum.MEDIUM,
+                "high": UrgencyEnum.HIGH,
+                "critical": UrgencyEnum.CRITICAL,
+            }
+            category_map = {
+                "bug": CategoryEnum.BUG,
+                "feature": CategoryEnum.FEATURE,
+                "question": CategoryEnum.QUESTION,
+                "complaint": CategoryEnum.COMPLAINT,
+                "praise": CategoryEnum.PRAISE,
+                "suggestion": CategoryEnum.SUGGESTION,
+                "lost": CategoryEnum.LOST,
+                "escalation": CategoryEnum.ESCALATION,
+            }
+
+            category = category_map.get(result["category"], CategoryEnum.QUESTION)
+            polarity = polarity_map.get(result["sentiment_polarity"], PolarityEnum.NEUTRAL)
+            urgency = urgency_map.get(result["urgency"], UrgencyEnum.LOW)
+            intensity = max(0.0, min(1.0, float(result["sentiment_intensity"])))
+            confidence = max(0.0, min(1.0, float(result["confidence"])))
+            business_impact = str(result.get("business_impact", "Standard review required"))
+            themes = result.get("themes", [])
+            if not isinstance(themes, list):
+                themes = []
+
+            return FeedbackClassification(
+                category=category,
+                subcategory=None,
+                sentiment=SentimentScore(
+                    polarity=polarity,
+                    intensity=intensity,
+                    urgency=urgency
+                ),
+                business_impact=business_impact,
+                confidence=confidence,
+                themes=themes
+            )
+        except Exception:
+            return None
 
     def _classify_with_rules(self, feedback_item: FeedbackItem) -> FeedbackClassification:
         """Classify using rule-based approach.

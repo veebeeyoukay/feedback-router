@@ -1,280 +1,653 @@
-"""Unit tests for feedback routing engine."""
-import json
+"""Unit tests for routing engine, escalation, rules, and team assignment."""
+
 import pytest
-from pathlib import Path
 
-# Load test fixtures
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-
-
-@pytest.fixture
-def prospect_productivity_fixture():
-    """Load prospect productivity fixture."""
-    with open(FIXTURES_DIR / "prospect_productivity.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def privacy_healthcare_fixture():
-    """Load privacy/healthcare fixture."""
-    with open(FIXTURES_DIR / "privacy_healthcare.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def lost_visitor_family_fixture():
-    """Load lost visitor/family fixture."""
-    with open(FIXTURES_DIR / "lost_visitor_family.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def client_career_security_fixture():
-    """Load client career security fixture."""
-    with open(FIXTURES_DIR / "client_career_security.json") as f:
-        return json.load(f)
+from src.schemas.feedback import (
+    FeedbackItem,
+    FeedbackSource,
+    FeedbackSourceEnum,
+    FeedbackContact,
+    ContactTypeEnum,
+    FeedbackContent,
+    FeedbackClassification,
+    FeedbackLifecycle,
+    FeedbackStatusEnum,
+    SentimentScore,
+    PolarityEnum,
+    UrgencyEnum,
+    CategoryEnum,
+    ResponseTypeEnum,
+)
+from src.schemas.routing import RoutingDecision
+from src.routing.engine import RoutingEngine
+from src.routing.escalation import EscalationEngine, EscalationTriggerEnum, EscalationResult
+from src.routing.rules import (
+    RuleEngine,
+    Rule,
+    Condition,
+    ConditionType,
+    RuleAction,
+    DEFAULT_RULES,
+)
+from src.routing.assignment import TeamAssignmentManager
 
 
-@pytest.fixture
-def all_themes_financial_fixture():
-    """Load all themes financial fixture."""
-    with open(FIXTURES_DIR / "all_themes_financial.json") as f:
-        return json.load(f)
+# ---------------------------------------------------------------------------
+# Helpers to build FeedbackItem objects quickly
+# ---------------------------------------------------------------------------
+
+def _make_feedback_item(
+    category=CategoryEnum.QUESTION,
+    polarity=PolarityEnum.NEUTRAL,
+    intensity=0.5,
+    urgency=UrgencyEnum.LOW,
+    contact_type=ContactTypeEnum.PROSPECT,
+    business_impact="Standard review required",
+    confidence=0.7,
+    themes=None,
+    raw_text="Some feedback text",
+    source_channel=FeedbackSourceEnum.WEBSITE_FORM,
+    with_classification=True,
+):
+    """Create a FeedbackItem for testing routing."""
+    item = FeedbackItem(
+        id="fb_test_routing",
+        source=FeedbackSource(channel=source_channel, raw_id="test_001"),
+        contact=FeedbackContact(type=contact_type),
+        content=FeedbackContent(raw_text=raw_text),
+        lifecycle=FeedbackLifecycle(status=FeedbackStatusEnum.CLASSIFIED),
+    )
+    if with_classification:
+        item.classification = FeedbackClassification(
+            category=category,
+            sentiment=SentimentScore(polarity=polarity, intensity=intensity, urgency=urgency),
+            business_impact=business_impact,
+            confidence=confidence,
+            themes=themes or [],
+        )
+    return item
 
 
-class TestEscalationTriggers:
-    """Test that escalation triggers fire correctly."""
+# ===========================================================================
+# RoutingEngine tests
+# ===========================================================================
 
-    def test_high_urgency_escalates(self, prospect_productivity_fixture):
-        """High urgency with firm deadline should escalate."""
-        routing = prospect_productivity_fixture["expected_routing"]
-        assert routing["escalated"] is True
+class TestRoutingEngineRoute:
+    """Test RoutingEngine.route() with classified feedback."""
 
-    def test_compliance_inquiry_escalates(self, privacy_healthcare_fixture):
-        """Compliance/security inquiry should escalate."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        assert routing["escalated"] is True
+    def test_route_returns_routing_decision(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.BUG)
+        decision = engine.route(item)
+        assert isinstance(decision, RoutingDecision)
 
-    def test_enterprise_deal_escalates(self, privacy_healthcare_fixture):
-        """200-seat enterprise deal should escalate."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        assert routing["escalated"] is True
+    def test_route_assigns_team(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.BUG)
+        decision = engine.route(item)
+        assert decision.assigned_team == "support"
 
-    def test_multi_theme_escalates(self, all_themes_financial_fixture):
-        """Multiple theme inquiry with strong ICP fit should escalate."""
-        routing = all_themes_financial_fixture["expected_routing"]
-        assert routing["escalated"] is True
+    def test_route_feature_to_product(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.FEATURE)
+        decision = engine.route(item)
+        assert decision.assigned_team == "product"
 
-    def test_lost_visitor_not_escalated(self, lost_visitor_family_fixture):
-        """Lost visitor should not be escalated (routed to concierge instead)."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        assert routing["escalated"] is False
+    def test_route_complaint_to_customer_success(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.COMPLAINT)
+        decision = engine.route(item)
+        assert decision.assigned_team == "customer_success"
 
-    def test_customer_support_escalation(self, client_career_security_fixture):
-        """Customer support can route to team without escalation flag."""
-        routing = client_career_security_fixture["expected_routing"]
-        # Customer routing may not need escalation flag but should route somewhere
-        assert "team" in routing
+    def test_route_lost_to_sales(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.LOST)
+        decision = engine.route(item)
+        assert decision.assigned_team == "sales"
 
+    def test_route_escalation_to_management(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.ESCALATION)
+        decision = engine.route(item)
+        assert decision.assigned_team == "management"
 
-class TestTeamAssignment:
-    """Test team assignment logic."""
+    def test_route_includes_recommended_action(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(category=CategoryEnum.BUG)
+        decision = engine.route(item)
+        assert len(decision.recommended_action) > 0
 
-    def test_prospect_routed_to_sales(self, prospect_productivity_fixture):
-        """Prospect inquiry should route to sales team."""
-        routing = prospect_productivity_fixture["expected_routing"]
-        assert routing["team"] == "sales"
+    def test_route_includes_channel(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(source_channel=FeedbackSourceEnum.SLACK)
+        decision = engine.route(item)
+        assert decision.channel == "slack"
 
-    def test_healthcare_routed_to_enterprise_sales(self, privacy_healthcare_fixture):
-        """Healthcare enterprise deal should route to enterprise sales."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        assert routing["team"] == "sales"
-        assert routing.get("sub_team") == "enterprise"
-
-    def test_lost_visitor_routed_to_concierge(self, lost_visitor_family_fixture):
-        """Lost visitor should route to concierge, not be dismissed."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        assert routing["team"] == "concierge"
-
-    def test_customer_routed_to_success(self, client_career_security_fixture):
-        """Existing customer request should route to customer success."""
-        routing = client_career_security_fixture["expected_routing"]
-        assert routing["team"] == "customer_success"
-
-    def test_high_value_prospect_to_sales(self, all_themes_financial_fixture):
-        """High-value ICP prospect should route to sales."""
-        routing = all_themes_financial_fixture["expected_routing"]
-        assert routing["team"] == "sales"
+    def test_route_email_source_preserves_channel(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(source_channel=FeedbackSourceEnum.EMAIL)
+        decision = engine.route(item)
+        assert decision.channel == "email"
 
 
-class TestLostVisitorHandling:
-    """Test that lost visitors are properly handled."""
+class TestRoutingEngineDefaultRouting:
+    """Test RoutingEngine._create_default_routing() for unclassified feedback."""
 
-    def test_lost_visitor_not_dismissed(self, lost_visitor_family_fixture):
-        """Lost visitor should receive concierge help, not be dismissed."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        action = routing["action"]
-        # Should either be concierge_respond or similar, never "ignore" or "dismiss"
-        assert "ignore" not in action
-        assert "dismiss" not in action
-        assert "concierge" in action
+    def test_default_routing_for_unclassified(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(with_classification=False)
+        decision = engine.route(item)
+        assert decision.assigned_team == "support"
+        assert decision.action == "route_to_support"
+        assert decision.escalated is False
+        assert decision.response_type == "flag_human"
+        assert decision.priority == 3
+        assert decision.rules_applied == []
 
-    def test_lost_visitor_team_is_concierge(self, lost_visitor_family_fixture):
-        """Lost visitor team assignment should be concierge."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        assert routing["team"] == "concierge"
-
-    def test_lost_visitor_reason_provided(self, lost_visitor_family_fixture):
-        """Routing decision for lost visitor should have clear reason."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        reason = routing.get("reason", "")
-        assert (
-            len(reason) > 0
-        ), "Reason for lost visitor routing should be documented"
-
-    def test_lost_visitor_genuine_concern_addressed(
-        self, lost_visitor_family_fixture
-    ):
-        """Lost visitor reason should acknowledge genuine concern, not dismiss them."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        reason = routing.get("reason", "").lower()
-        assert "genuine" in reason or "concern" in reason or "help" in reason
+    def test_default_routing_recommended_action(self):
+        engine = RoutingEngine()
+        item = _make_feedback_item(with_classification=False)
+        decision = engine.route(item)
+        assert decision.recommended_action == "Review and classify"
 
 
-class TestConfidenceThresholds:
-    """Test confidence assessment in routing decisions."""
+class TestRoutingEngineDetermineResponseType:
+    """Test RoutingEngine._determine_response_type() at different confidence levels."""
 
-    def test_clear_prospect_has_confidence(self, prospect_productivity_fixture):
-        """Clear prospect signals should have high confidence."""
-        routing = prospect_productivity_fixture["expected_routing"]
-        # Reason should indicate why we're confident
-        reason = routing.get("reason", "")
-        assert len(reason) > 0, "Routing decision should explain confidence"
+    def test_high_confidence_auto_acknowledge(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.90, "prospect")
+        assert result == "auto_acknowledge"
 
-    def test_compliance_inquiry_has_clear_path(self, privacy_healthcare_fixture):
-        """Compliance inquiry should have clear routing path."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        assert "enterprise" in routing.get("sub_team", "").lower() or "sales" in routing[
-            "team"
-        ].lower()
+    def test_exactly_high_threshold_auto_acknowledge(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.85, "prospect")
+        assert result == "auto_acknowledge"
 
-    def test_mixed_signal_routing_explained(self, all_themes_financial_fixture):
-        """Complex multi-theme routing should be well-explained."""
-        routing = all_themes_financial_fixture["expected_routing"]
-        reason = routing.get("reason", "")
-        assert len(reason) > 0, "Complex routing should be well-explained"
+    def test_medium_confidence_prospect_draft_faq(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.70, "prospect")
+        assert result == "draft_faq"
 
+    def test_medium_confidence_client_draft_faq(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.70, "client")
+        assert result == "draft_faq"
 
-class TestRoutingDecisionReasons:
-    """Test that routing decisions include clear reasons."""
+    def test_medium_confidence_unknown_draft_complex(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.70, "unknown")
+        assert result == "draft_complex"
 
-    def test_all_fixtures_have_reasons(self):
-        """Every fixture's routing should include a reason."""
-        fixtures = [
-            "prospect_productivity.json",
-            "privacy_healthcare.json",
-            "lost_visitor_family.json",
-            "client_career_security.json",
-            "all_themes_financial.json",
-        ]
-        for fixture_name in fixtures:
-            with open(FIXTURES_DIR / fixture_name) as f:
-                fixture = json.load(f)
-                routing = fixture["expected_routing"]
-                assert "reason" in routing, f"{fixture_name} missing routing reason"
-                assert len(routing["reason"]) > 0, f"{fixture_name} has empty reason"
+    def test_low_confidence_flag_human(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.3, "prospect")
+        assert result == "flag_human"
 
-    def test_reason_explains_team_choice(self, prospect_productivity_fixture):
-        """Reason should explain why that team was chosen."""
-        routing = prospect_productivity_fixture["expected_routing"]
-        reason = routing["reason"].lower()
-        team = routing["team"].lower()
-        # Reason should relate to the team assignment
-        assert len(reason) > 10, "Reason should be descriptive"
-
-    def test_escalation_reason_clear(self, privacy_healthcare_fixture):
-        """Escalation reasons should be specific and actionable."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        if routing["escalated"]:
-            reason = routing["reason"].lower()
-            # Should mention enterprise, healthcare, compliance, or similar
-            assert any(
-                keyword in reason
-                for keyword in [
-                    "enterprise",
-                    "healthcare",
-                    "compliance",
-                    "200",
-                    "legal",
-                ]
-            ), f"Escalation reason unclear: {reason}"
+    def test_zero_confidence_flag_human(self):
+        engine = RoutingEngine()
+        result = engine._determine_response_type(0.0, "prospect")
+        assert result == "flag_human"
 
 
-class TestRoutingConsistency:
-    """Test that routing decisions are internally consistent."""
+class TestRoutingEngineDeterminePriority:
+    """Test RoutingEngine._determine_priority() with various urgency/contact combos."""
 
-    def test_sales_routing_for_prospects(self, prospect_productivity_fixture):
-        """All prospect contact types should route to sales."""
-        classification = prospect_productivity_fixture["expected_classification"]
-        routing = prospect_productivity_fixture["expected_routing"]
-        if classification["contact_type"] == "prospect":
-            assert routing["team"] == "sales"
+    def test_critical_urgency_priority_one(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("critical", 0.5, "prospect")
+        assert result == 1
 
-    def test_client_routing_to_success_or_sales(self, client_career_security_fixture):
-        """Client contact type should route to customer success or sales."""
-        classification = client_career_security_fixture["expected_classification"]
-        routing = client_career_security_fixture["expected_routing"]
-        if classification["contact_type"] == "client":
-            assert routing["team"] in ["customer_success", "sales"]
+    def test_high_urgency_high_intensity_priority_one(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("high", 0.8, "prospect")
+        assert result == 1
 
-    def test_high_urgency_gets_escalated(self, prospect_productivity_fixture):
-        """High urgency classification should result in escalation."""
-        classification = prospect_productivity_fixture["expected_classification"]
-        routing = prospect_productivity_fixture["expected_routing"]
-        if classification["urgency"] == "high":
-            assert routing["escalated"] is True
+    def test_high_urgency_low_intensity_priority_two(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("high", 0.5, "prospect")
+        assert result == 2
 
-    def test_compliance_flag_triggers_escalation(self, privacy_healthcare_fixture):
-        """Compliance flag in classification should trigger escalation."""
-        classification = privacy_healthcare_fixture["expected_classification"]
-        routing = privacy_healthcare_fixture["expected_routing"]
-        if classification.get("compliance_flag"):
-            assert routing["escalated"] is True
+    def test_client_contact_type_priority_two(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("medium", 0.5, "client")
+        assert result == 2
+
+    def test_churned_contact_type_priority_two(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("medium", 0.5, "churned")
+        assert result == 2
+
+    def test_medium_urgency_priority_three(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("medium", 0.5, "prospect")
+        assert result == 3
+
+    def test_low_urgency_priority_four(self):
+        engine = RoutingEngine()
+        result = engine._determine_priority("low", 0.3, "unknown")
+        assert result == 4
 
 
-class TestActionTypes:
-    """Test that routing action types are valid and appropriate."""
+# ===========================================================================
+# EscalationEngine tests
+# ===========================================================================
 
-    def test_valid_action_types(self):
-        """All fixtures should have valid action types."""
-        valid_actions = {
-            "respond_with_routing",
-            "escalate_to_human",
-            "concierge_respond",
-            "route_to_human",
-            "auto_respond",
+class TestEscalationEngine:
+    """Test EscalationEngine.evaluate_escalation() for each of the 7 triggers."""
+
+    def test_sentiment_intensity_high_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.9,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "question",
+            "contact_type": "prospect",
+            "business_impact": "Standard",
+            "raw_text": "Just a question",
         }
-        fixtures = [
-            "prospect_productivity.json",
-            "privacy_healthcare.json",
-            "lost_visitor_family.json",
-            "client_career_security.json",
-            "all_themes_financial.json",
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.SENTIMENT_INTENSITY_HIGH.value
+
+    def test_negative_sentiment_escalation_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.75,
+            "polarity": "negative",
+            "urgency": "medium",
+            "category": "complaint",
+            "contact_type": "client",
+            "business_impact": "Client satisfaction at risk",
+            "raw_text": "Very disappointed with the service",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        # Could be sentiment_intensity_high or negative_sentiment_escalation
+        assert result.trigger_name in [
+            EscalationTriggerEnum.SENTIMENT_INTENSITY_HIGH.value,
+            EscalationTriggerEnum.NEGATIVE_SENTIMENT_ESCALATION.value,
         ]
-        for fixture_name in fixtures:
-            with open(FIXTURES_DIR / fixture_name) as f:
-                fixture = json.load(f)
-                action = fixture["expected_routing"]["action"]
-                assert (
-                    action in valid_actions
-                ), f"Invalid action '{action}' in {fixture_name}"
 
-    def test_concierge_for_lost_visitors(self, lost_visitor_family_fixture):
-        """Lost visitors should use concierge_respond action."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        assert "concierge" in routing["action"]
+    def test_critical_urgency_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "critical",
+            "category": "bug",
+            "contact_type": "client",
+            "business_impact": "Immediate action required",
+            "raw_text": "System is down for our entire team",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        # Intensity might trip first at 0.5, but urgency=critical should trigger
+        # The check order in code has intensity first, so with 0.5 intensity it should
+        # not trip intensity but will trip critical_urgency
+        assert result.trigger_name == EscalationTriggerEnum.CRITICAL_URGENCY.value
 
-    def test_escalate_action_for_complex_cases(self, privacy_healthcare_fixture):
-        """Complex cases should use escalate_to_human action."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        assert "escalate" in routing["action"]
+    def test_lost_customer_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "lost",
+            "contact_type": "client",
+            "business_impact": "Potential churn",
+            "raw_text": "Thinking about alternatives",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.LOST_CUSTOMER.value
+
+    def test_churned_contact_type_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "question",
+            "contact_type": "churned",
+            "business_impact": "Standard",
+            "raw_text": "Some feedback",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.LOST_CUSTOMER.value
+
+    def test_security_issue_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "question",
+            "contact_type": "prospect",
+            "business_impact": "Standard",
+            "raw_text": "We found a vulnerability in the API endpoint",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.SECURITY_ISSUE.value
+
+    def test_executive_mention_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "question",
+            "contact_type": "prospect",
+            "business_impact": "Standard",
+            "raw_text": "Our CEO wants to discuss this with your leadership.",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.EXECUTIVE_MENTION.value
+
+    def test_business_impact_high_trigger(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.5,
+            "polarity": "neutral",
+            "urgency": "low",
+            "category": "question",
+            "contact_type": "prospect",
+            "business_impact": "Major account at risk",
+            "raw_text": "Our contract renewal is coming up and we have concerns",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert result.trigger_name == EscalationTriggerEnum.BUSINESS_IMPACT_HIGH.value
+
+    def test_no_escalation_for_low_risk(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.3,
+            "polarity": "positive",
+            "urgency": "low",
+            "category": "praise",
+            "contact_type": "prospect",
+            "business_impact": "Standard review required",
+            "raw_text": "Great product so far, looking forward to more.",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is False
+        assert result.trigger_name is None
+
+    def test_escalation_result_has_reason(self):
+        engine = EscalationEngine()
+        context = {
+            "intensity": 0.95,
+            "polarity": "negative",
+            "urgency": "high",
+            "category": "complaint",
+            "contact_type": "client",
+            "business_impact": "Client at risk",
+            "raw_text": "Very angry about the service",
+        }
+        result = engine.evaluate_escalation(context)
+        assert result.triggered is True
+        assert len(result.reason) > 0
+
+
+# ===========================================================================
+# RuleEngine tests
+# ===========================================================================
+
+class TestRuleEngine:
+    """Test RuleEngine.evaluate_all() and related functionality."""
+
+    def test_evaluate_all_with_matching_rule(self):
+        engine = RuleEngine()
+        rule = Rule(
+            name="test_rule",
+            description="Match bug category",
+            conditions=[Condition("category", ConditionType.EQUALS, "bug")],
+            action=RuleAction.ROUTE_TO_SUPPORT,
+            priority=2,
+        )
+        engine.add_rule(rule)
+
+        matching = engine.evaluate_all({"category": "bug"})
+        assert len(matching) == 1
+        assert matching[0].name == "test_rule"
+
+    def test_evaluate_all_with_no_matching_rules(self):
+        engine = RuleEngine()
+        rule = Rule(
+            name="bug_rule",
+            description="Match bug",
+            conditions=[Condition("category", ConditionType.EQUALS, "bug")],
+            action=RuleAction.ROUTE_TO_SUPPORT,
+        )
+        engine.add_rule(rule)
+
+        matching = engine.evaluate_all({"category": "feature"})
+        assert len(matching) == 0
+
+    def test_evaluate_all_multiple_rules_sorted_by_priority(self):
+        engine = RuleEngine()
+        low_priority = Rule(
+            name="low_priority",
+            description="Low",
+            conditions=[Condition("category", ConditionType.EQUALS, "bug")],
+            action=RuleAction.ROUTE_TO_SUPPORT,
+            priority=5,
+        )
+        high_priority = Rule(
+            name="high_priority",
+            description="High",
+            conditions=[Condition("category", ConditionType.EQUALS, "bug")],
+            action=RuleAction.ESCALATE,
+            priority=1,
+        )
+        engine.add_rule(low_priority)
+        engine.add_rule(high_priority)
+
+        matching = engine.evaluate_all({"category": "bug"})
+        assert len(matching) == 2
+        assert matching[0].name == "high_priority"
+        assert matching[1].name == "low_priority"
+
+    def test_evaluate_all_max_matches(self):
+        engine = RuleEngine()
+        for i in range(5):
+            engine.add_rule(Rule(
+                name=f"rule_{i}",
+                description=f"Rule {i}",
+                conditions=[Condition("category", ConditionType.EQUALS, "bug")],
+                action=RuleAction.ROUTE_TO_SUPPORT,
+                priority=i,
+            ))
+
+        matching = engine.evaluate_all({"category": "bug"}, max_matches=2)
+        assert len(matching) == 2
+
+    def test_evaluate_multi_condition_rule(self):
+        engine = RuleEngine()
+        rule = Rule(
+            name="prospect_negative",
+            description="Prospect with negative sentiment",
+            conditions=[
+                Condition("contact_type", ConditionType.EQUALS, "prospect"),
+                Condition("polarity", ConditionType.EQUALS, "negative"),
+                Condition("intensity", ConditionType.GREATER_THAN, 0.7),
+            ],
+            action=RuleAction.ESCALATE,
+            priority=1,
+        )
+        engine.add_rule(rule)
+
+        # All conditions match
+        matching = engine.evaluate_all({
+            "contact_type": "prospect",
+            "polarity": "negative",
+            "intensity": 0.8,
+        })
+        assert len(matching) == 1
+
+        # One condition fails
+        matching = engine.evaluate_all({
+            "contact_type": "prospect",
+            "polarity": "positive",
+            "intensity": 0.8,
+        })
+        assert len(matching) == 0
+
+    def test_get_rule_by_name(self):
+        engine = RuleEngine()
+        rule = Rule(
+            name="my_rule",
+            description="My rule",
+            conditions=[],
+            action=RuleAction.AUTO_RESPOND,
+        )
+        engine.add_rule(rule)
+
+        found = engine.get_rule("my_rule")
+        assert found is not None
+        assert found.name == "my_rule"
+
+    def test_get_rule_nonexistent_returns_none(self):
+        engine = RuleEngine()
+        found = engine.get_rule("nonexistent")
+        assert found is None
+
+
+class TestConditionEvaluation:
+    """Test individual Condition evaluation."""
+
+    def test_equals_condition(self):
+        cond = Condition("field", ConditionType.EQUALS, "value")
+        assert cond.evaluate({"field": "value"}) is True
+        assert cond.evaluate({"field": "other"}) is False
+
+    def test_not_equals_condition(self):
+        cond = Condition("field", ConditionType.NOT_EQUALS, "value")
+        assert cond.evaluate({"field": "other"}) is True
+        assert cond.evaluate({"field": "value"}) is False
+
+    def test_in_condition(self):
+        cond = Condition("field", ConditionType.IN, ["a", "b", "c"])
+        assert cond.evaluate({"field": "b"}) is True
+        assert cond.evaluate({"field": "d"}) is False
+
+    def test_contains_condition(self):
+        cond = Condition("field", ConditionType.CONTAINS, "needle")
+        assert cond.evaluate({"field": "haystackneedlemore"}) is True
+        assert cond.evaluate({"field": "no match"}) is False
+
+    def test_greater_than_condition(self):
+        cond = Condition("field", ConditionType.GREATER_THAN, 0.5)
+        assert cond.evaluate({"field": 0.8}) is True
+        assert cond.evaluate({"field": 0.3}) is False
+
+    def test_less_than_condition(self):
+        cond = Condition("field", ConditionType.LESS_THAN, 0.5)
+        assert cond.evaluate({"field": 0.3}) is True
+        assert cond.evaluate({"field": 0.8}) is False
+
+
+class TestDefaultRules:
+    """Test that DEFAULT_RULES are well-formed."""
+
+    def test_default_rules_exist(self):
+        assert len(DEFAULT_RULES) > 0
+
+    def test_default_rules_have_names(self):
+        for rule in DEFAULT_RULES:
+            assert len(rule.name) > 0
+
+    def test_default_rules_have_conditions(self):
+        for rule in DEFAULT_RULES:
+            assert len(rule.conditions) > 0
+
+    def test_critical_urgency_rule_exists(self):
+        names = [r.name for r in DEFAULT_RULES]
+        assert "critical_urgency_escalation" in names
+
+    def test_bug_reports_rule_exists(self):
+        names = [r.name for r in DEFAULT_RULES]
+        assert "bug_reports_to_support" in names
+
+
+# ===========================================================================
+# TeamAssignmentManager tests
+# ===========================================================================
+
+class TestTeamAssignmentManager:
+    """Test TeamAssignmentManager.get_team_for_category() mapping."""
+
+    def test_bug_maps_to_support(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("bug") == "support"
+
+    def test_feature_maps_to_product(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("feature") == "product"
+
+    def test_question_maps_to_support(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("question") == "support"
+
+    def test_complaint_maps_to_customer_success(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("complaint") == "customer_success"
+
+    def test_praise_maps_to_customer_success(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("praise") == "customer_success"
+
+    def test_suggestion_maps_to_product(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("suggestion") == "product"
+
+    def test_lost_maps_to_sales(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("lost") == "sales"
+
+    def test_escalation_maps_to_management(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("escalation") == "management"
+
+    def test_unknown_category_defaults_to_support(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_category("nonexistent_category") == "support"
+
+    def test_get_team_for_critical_urgency(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_urgency("critical") == "management"
+
+    def test_get_team_for_non_critical_urgency(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_team_for_urgency("high") is None
+
+    def test_is_team_available(self):
+        manager = TeamAssignmentManager()
+        assert manager.is_team_available("sales") is True
+        assert manager.is_team_available("nonexistent_team") is False
+
+    def test_get_backup_team(self):
+        manager = TeamAssignmentManager()
+        assert manager.get_backup_team("sales") == "customer_success"
+        assert manager.get_backup_team("support") == "customer_success"
+        assert manager.get_backup_team("product") == "support"
+        assert manager.get_backup_team("customer_success") == "support"
+
+    def test_get_team_config(self):
+        manager = TeamAssignmentManager()
+        config = manager.get_team_config("sales")
+        assert config is not None
+        assert config.name == "Sales"
+
+    def test_get_all_teams(self):
+        manager = TeamAssignmentManager()
+        all_teams = manager.get_all_teams()
+        assert "sales" in all_teams
+        assert "support" in all_teams
+        assert "product" in all_teams
+        assert "customer_success" in all_teams

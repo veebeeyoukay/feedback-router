@@ -12,12 +12,15 @@ from fastapi.middleware.base import BaseHTTPMiddleware
 from src.utils.config import get_config
 from src.utils.logger import get_app_logger
 from src.middleware.error_handler import ErrorHandler
+from src.db.session import init_db, close_db
 from src.agents.intake import IntakeAgent
 from src.agents.classifier import ClassifierAgent
 from src.agents.router import RouterAgent
 from src.agents.responder import ResponderAgent
 from src.channels.website.webhook import WebsiteWebhookHandler, RateLimiter
 from src.channels.slack.events import SlackEventHandler
+from src.channels.slack.commands import SlackCommandHandler
+from src.tasks.pipeline import FeedbackPipeline
 
 logger = get_app_logger()
 config = get_config()
@@ -103,6 +106,13 @@ website_rate_limiter = RateLimiter(
     window_seconds=config.webhook.rate_limit_window if config.webhook else 60
 )
 slack_event_handler = SlackEventHandler()
+slack_command_handler = SlackCommandHandler()
+feedback_pipeline = FeedbackPipeline(
+    intake_agent=intake_agent,
+    classifier_agent=classifier_agent,
+    router_agent=router_agent,
+    responder_agent=responder_agent,
+)
 
 
 @asynccontextmanager
@@ -120,9 +130,11 @@ async def lifespan(app: FastAPI):
     )
 
     # Initialize connections
+    logger.info("Initializing database")
+    init_db()
+
     if config.database:
-        logger.info("Initializing database connection", url=config.database.url)
-        # Database initialization would go here
+        logger.info("Database connection configured", url=config.database.url)
 
     if config.redis:
         logger.info(
@@ -138,9 +150,8 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutting down")
 
     # Close connections
-    if config.database:
-        logger.info("Closing database connection")
-        # Database cleanup would go here
+    logger.info("Closing database connection")
+    close_db()
 
     if config.redis:
         logger.info("Closing Redis connection")
@@ -505,6 +516,108 @@ async def slack_events(request: Request) -> Dict[str, Any]:
             {}
         )
         raise HTTPException(status_code=400, detail="Failed to process Slack event")
+
+
+@app.post("/webhooks/slack/commands", tags=["webhooks"])
+async def slack_commands(request: Request) -> Dict[str, Any]:
+    """Handle Slack slash commands.
+
+    Slack sends slash command payloads as application/x-www-form-urlencoded.
+    The payload includes: command, text, user_id, channel_id, response_url,
+    trigger_id, etc.
+
+    Args:
+        request: HTTP request
+
+    Returns:
+        Response dict for Slack (response_type + text/blocks)
+    """
+    try:
+        form_data = await request.form()
+        command_data = {
+            "command": form_data.get("command", ""),
+            "text": form_data.get("text", ""),
+            "user_id": form_data.get("user_id", ""),
+            "user_name": form_data.get("user_name", ""),
+            "channel_id": form_data.get("channel_id", ""),
+            "channel_name": form_data.get("channel_name", ""),
+            "response_url": form_data.get("response_url", ""),
+            "trigger_id": form_data.get("trigger_id", ""),
+            "team_id": form_data.get("team_id", ""),
+        }
+
+        command = command_data["command"]
+
+        logger.info(
+            "Slack slash command received",
+            command=command,
+            user_id=command_data["user_id"],
+            channel_id=command_data["channel_id"],
+        )
+
+        response = slack_command_handler.handle_command(command, command_data)
+        return response
+
+    except Exception as exc:
+        logger.error("Error handling Slack command", exception=exc)
+        error_handler.handle_processing_error(
+            "slack_command_error",
+            str(exc),
+            {}
+        )
+        return {
+            "response_type": "ephemeral",
+            "text": "Sorry, something went wrong processing your command. Please try again.",
+        }
+
+
+@app.post("/api/v1/feedback/process", tags=["feedback"])
+async def process_feedback_sync(raw_feedback: Dict[str, Any]) -> Dict[str, Any]:
+    """Run raw feedback through the complete pipeline synchronously.
+
+    This endpoint is useful when Celery is not available. It performs
+    intake, classification, routing, and response generation in a single
+    request.
+
+    Args:
+        raw_feedback: Raw feedback data. Should include at minimum a "text"
+                      field. Optional: "channel" (default "email"), "name",
+                      "email", and any other channel-specific fields.
+
+    Returns:
+        Complete FeedbackItem as a JSON dict with all pipeline fields
+        populated.
+    """
+    try:
+        channel = raw_feedback.get("channel", "email")
+
+        logger.info(
+            "Processing feedback synchronously",
+            channel=channel,
+        )
+
+        feedback_item = feedback_pipeline.process(raw_feedback, channel)
+
+        logger.log_feedback_event(
+            "pipeline_complete",
+            feedback_item.id,
+            channel=channel,
+            status=feedback_item.lifecycle.status.value,
+        )
+
+        return feedback_item.model_dump(mode="json")
+
+    except Exception as exc:
+        logger.error("Error in synchronous feedback processing", exception=exc)
+        error_handler.handle_processing_error(
+            "pipeline_error",
+            str(exc),
+            raw_feedback,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to process feedback through pipeline",
+        )
 
 
 # Monitoring and admin endpoints

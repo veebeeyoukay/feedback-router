@@ -1,455 +1,404 @@
-"""Integration tests for the full feedback pipeline."""
-import json
+"""Integration tests for the full feedback pipeline: intake -> classify -> route -> respond."""
+
 import pytest
-from pathlib import Path
 
-# Load test fixtures
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-
-
-@pytest.fixture
-def prospect_productivity_fixture():
-    """Load prospect productivity fixture."""
-    with open(FIXTURES_DIR / "prospect_productivity.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def privacy_healthcare_fixture():
-    """Load privacy/healthcare fixture."""
-    with open(FIXTURES_DIR / "privacy_healthcare.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def lost_visitor_family_fixture():
-    """Load lost visitor/family fixture."""
-    with open(FIXTURES_DIR / "lost_visitor_family.json") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def client_career_security_fixture():
-    """Load client career security fixture."""
-    with open(FIXTURES_DIR / "client_career_security.json") as f:
-        return json.load(f)
+from src.schemas.feedback import (
+    FeedbackItem,
+    FeedbackSource,
+    FeedbackSourceEnum,
+    FeedbackContact,
+    ContactTypeEnum,
+    FeedbackContent,
+    FeedbackClassification,
+    FeedbackLifecycle,
+    FeedbackStatusEnum,
+    FeedbackResponse,
+    SentimentScore,
+    PolarityEnum,
+    UrgencyEnum,
+    CategoryEnum,
+    ResponseTypeEnum,
+)
+from src.schemas.routing import RoutingDecision
+from src.agents.intake import IntakeAgent
+from src.agents.classifier import ClassifierAgent
+from src.agents.router import RouterAgent
+from src.agents.responder import ResponderAgent
+from src.agents.concierge import ConciergeAgent
 
 
-@pytest.fixture
-def all_themes_financial_fixture():
-    """Load all themes financial fixture."""
-    with open(FIXTURES_DIR / "all_themes_financial.json") as f:
-        return json.load(f)
+# ===========================================================================
+# End-to-end pipeline tests
+# ===========================================================================
+
+class TestEndToEndPipeline:
+    """Test raw feedback -> intake -> classify -> route -> respond flow."""
+
+    def _run_pipeline(self, raw_input, channel, contact_db=None):
+        """Run the full pipeline and return all intermediate results."""
+        intake = IntakeAgent(contact_db=contact_db)
+        classifier = ClassifierAgent(use_llm=False)
+        router = RouterAgent()
+        responder = ResponderAgent()
+
+        # Step 1: Intake
+        feedback_item = intake.normalize_feedback(raw_input, channel)
+        assert isinstance(feedback_item, FeedbackItem)
+        assert feedback_item.lifecycle.status == FeedbackStatusEnum.RECEIVED
+
+        # Step 2: Classify
+        classification = classifier.classify(feedback_item)
+        feedback_item.classification = classification
+        assert isinstance(classification, FeedbackClassification)
+
+        # Step 3: Route
+        routing_decision = router.route(feedback_item)
+        assert isinstance(routing_decision, RoutingDecision)
+
+        # Step 4: Respond
+        response = responder.generate_response(feedback_item, routing_decision)
+        assert isinstance(response, FeedbackResponse)
+
+        return feedback_item, classification, routing_decision, response
+
+    def test_bug_report_pipeline(self):
+        """Bug report flows through to support team."""
+        raw = {
+            "id": "form_bug",
+            "text": "The export feature has a bug. It crashes with an error every time I try to download.",
+            "name": "Bug Reporter",
+            "email": "bugs@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.BUG
+        assert routing.assigned_team == "support"
+        assert response.response_type in [
+            ResponseTypeEnum.AUTO_ACKNOWLEDGE,
+            ResponseTypeEnum.DRAFT_FAQ,
+            ResponseTypeEnum.DRAFT_COMPLEX,
+            ResponseTypeEnum.FLAG_HUMAN,
+        ]
+
+    def test_feature_request_pipeline(self):
+        """Feature request flows through to product team."""
+        raw = {
+            "id": "form_feature",
+            "text": "We need a new feature for bulk export capability. Please add this enhancement.",
+            "name": "Feature Requester",
+            "email": "features@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.FEATURE
+        assert routing.assigned_team == "product"
+
+    def test_complaint_pipeline(self):
+        """Complaint flows through to customer success."""
+        raw = {
+            "id": "form_complaint",
+            "text": "I'm very frustrated and disappointed with your terrible service. This is unacceptable and poor quality.",
+            "name": "Unhappy Customer",
+            "email": "unhappy@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.COMPLAINT
+        assert routing.assigned_team == "customer_success"
+        assert classification.sentiment.polarity == PolarityEnum.NEGATIVE
+
+    def test_praise_pipeline(self):
+        """Praise flows through to customer success."""
+        raw = {
+            "id": "form_praise",
+            "text": "I love this product! It's amazing and excellent. Best tool we've used.",
+            "name": "Happy Customer",
+            "email": "happy@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.PRAISE
+        assert routing.assigned_team == "customer_success"
+        assert classification.sentiment.polarity == PolarityEnum.POSITIVE
+
+    def test_lost_customer_pipeline(self):
+        """Lost/churn risk flows through to sales with escalation."""
+        raw = {
+            "id": "form_lost",
+            "text": "We are switching to a competitor and considering canceling our subscription. Looking at alternative solutions.",
+            "name": "Leaving Customer",
+            "email": "leaving@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.LOST
+        assert routing.assigned_team == "sales"
+
+    def test_escalation_pipeline(self):
+        """Escalation-worthy feedback gets escalated."""
+        raw = {
+            "id": "form_escalation",
+            "text": "This is urgent and critical. We found a security compliance issue that needs immediate executive attention.",
+            "name": "Security Team Lead",
+            "email": "security@bigcorp.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "website_form")
+
+        assert classification.category == CategoryEnum.ESCALATION
+        assert routing.escalated is True
+
+    def test_slack_channel_pipeline(self):
+        """Slack feedback preserves channel in routing."""
+        raw = {
+            "id": "slack_001",
+            "text": "The API has a bug. Getting error 500 on the dashboard endpoint.",
+            "slack_handle": "user123",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "slack")
+
+        assert item.source.channel == FeedbackSourceEnum.SLACK
+        assert routing.channel == "slack"
+
+    def test_email_channel_pipeline(self):
+        """Email feedback preserves channel in routing."""
+        raw = {
+            "id": "email_001",
+            "text": "How do I reset my password? Can you help me understand the process?",
+            "name": "Email User",
+            "email": "emailuser@example.com",
+        }
+        item, classification, routing, response = self._run_pipeline(raw, "email")
+
+        assert item.source.channel == FeedbackSourceEnum.EMAIL
+        assert routing.channel == "email"
 
 
-class TestProspectProductivityPipeline:
-    """Integration test for prospect productivity scenario (Eval 1)."""
+# ===========================================================================
+# Different feedback types produce different routing decisions
+# ===========================================================================
 
-    def test_prospect_productivity_end_to_end(self, prospect_productivity_fixture):
-        """
-        Full pipeline for Karen M., consulting manager.
+class TestDifferentRoutingDecisions:
+    """Test that different feedback types produce distinct routing decisions."""
 
-        Expected flow:
-        1. Raw input normalized
-        2. Contact identified as prospect
-        3. Classified as product_inquiry with themes 1+3
-        4. Escalated to sales due to high urgency + strong prospect
-        5. Response includes routing to sales with deadline context
-        """
-        fixture = prospect_productivity_fixture
+    def _classify_and_route(self, text, channel="website_form"):
+        intake = IntakeAgent()
+        classifier = ClassifierAgent(use_llm=False)
+        router = RouterAgent()
 
-        # Stage 1: Input validation
-        assert fixture["raw_input"]
-        assert fixture["channel"] == "website"
+        item = intake.normalize_feedback({"id": "test", "text": text}, channel)
+        classification = classifier.classify(item)
+        item.classification = classification
+        decision = router.route(item)
+        return classification, decision
 
-        # Stage 2: Contact identification
-        contact = fixture["metadata"]["contact"]
-        assert contact["name"] == "Karen M."
-        assert contact["company"] == "Deloitte"
-        assert contact["role"] == "Consulting Team Manager"
-
-        # Stage 3: Classification
-        classification = fixture["expected_classification"]
-        assert classification["contact_type"] == "prospect"
-        assert classification["category"] == "product_inquiry"
-        assert 1 in classification["themes"]  # Productivity
-        assert 3 in classification["themes"]  # Learning Curve
-        assert classification["sentiment"] == "positive"
-        assert classification["urgency"] == "high"
-
-        # Stage 4: Routing
-        routing = fixture["expected_routing"]
-        assert routing["team"] == "sales"
-        assert routing["escalated"] is True
-        assert "deadline" in routing["reason"].lower() or "thursday" in fixture["raw_input"].lower()
-
-        # Stage 5: Response metadata
-        assert "reason" in routing
-
-    def test_prospect_productivity_has_email(self, prospect_productivity_fixture):
-        """Email should be present for contacting prospect."""
-        contact = prospect_productivity_fixture["metadata"]["contact"]
-        assert "email" in contact
-        assert "@" in contact["email"]
-
-    def test_prospect_productivity_deadline_context(self, prospect_productivity_fixture):
-        """Routing reason should highlight deadline urgency."""
-        routing = prospect_productivity_fixture["expected_routing"]
-        reason = routing["reason"].lower()
-        assert "thursday" in reason or "deadline" in reason or "tight" in reason
-
-
-class TestPrivacyHealthcarePipeline:
-    """Integration test for healthcare privacy inquiry (Eval 2)."""
-
-    def test_privacy_healthcare_end_to_end(self, privacy_healthcare_fixture):
-        """
-        Full pipeline for David Chen, VP Ops at Meridian Health.
-
-        Expected flow:
-        1. Raw input from Slack normalized
-        2. Contact identified as prospect
-        3. Classified as compliance_security_inquiry with theme 4
-        4. Escalated to enterprise sales due to 200-seat deal + compliance needs
-        5. Response includes security brief commitment
-        """
-        fixture = privacy_healthcare_fixture
-
-        # Stage 1: Input validation
-        assert fixture["raw_input"]
-        assert fixture["channel"] == "slack"
-
-        # Stage 2: Contact identification
-        contact = fixture["metadata"]["contact"]
-        assert contact["name"] == "David Chen"
-        assert contact["company"] == "Meridian Health"
-        assert contact["estimated_team_size"] == 200
-
-        # Stage 3: Classification
-        classification = fixture["expected_classification"]
-        assert classification["contact_type"] == "prospect"
-        assert classification["category"] == "compliance_security_inquiry"
-        assert 4 in classification["themes"]  # Privacy
-        assert classification.get("compliance_flag") is True
-        assert classification["urgency"] == "high"
-
-        # Stage 4: Routing
-        routing = fixture["expected_routing"]
-        assert routing["team"] == "sales"
-        assert routing.get("sub_team") == "enterprise"
-        assert routing["escalated"] is True
-
-        # Stage 5: Response metadata
-        assert "enterprise" in routing["reason"].lower() or "compliance" in routing["reason"].lower()
-
-    def test_privacy_healthcare_has_slack_context(self, privacy_healthcare_fixture):
-        """Should have Slack metadata."""
-        metadata = privacy_healthcare_fixture["metadata"]
-        assert "slack_channel" in metadata
-        assert "slack_user_id" in metadata
-
-    def test_privacy_healthcare_legal_escalation(self, privacy_healthcare_fixture):
-        """Legal/compliance needs should be clear in escalation."""
-        routing = privacy_healthcare_fixture["expected_routing"]
-        reason = routing["reason"].lower()
-        assert "compliance" in reason or "legal" in reason or "hipaa" in reason or "security" in reason
-
-
-class TestLostVisitorPipeline:
-    """Integration test for lost visitor/family concern (Eval 3)."""
-
-    def test_lost_visitor_end_to_end(self, lost_visitor_family_fixture):
-        """
-        Full pipeline for parent concerned about daughter's ChatGPT use.
-
-        Expected flow:
-        1. Raw input from pricing page normalized
-        2. Contact identified as lost_visitor (not logged in)
-        3. Classified as lost_visitor_inquiry with theme 5
-        4. NOT escalated (routed to concierge for empathetic help)
-        5. Response is concierge-style: empathize, redirect, provide resources
-        """
-        fixture = lost_visitor_family_fixture
-
-        # Stage 1: Input validation
-        assert fixture["raw_input"]
-        assert fixture["channel"] == "website"
-
-        # Stage 2: Contact identification
-        contact = fixture["metadata"]["contact"]
-        assert contact.get("logged_in") is False
-        assert contact["role"] == "Parent"
-
-        # Stage 3: Classification
-        classification = fixture["expected_classification"]
-        assert classification["contact_type"] == "lost_visitor"
-        assert classification["category"] == "lost_visitor_inquiry"
-        assert 5 in classification["themes"]  # Family
-        assert classification["icp_fit"] == "not_applicable"
-
-        # Stage 4: Routing
-        routing = fixture["expected_routing"]
-        assert routing["team"] == "concierge"
-        assert routing["escalated"] is False
-        # CRITICAL: action must include concierge, never dismiss
-        assert "concierge" in routing["action"]
-
-        # Stage 5: Response metadata
-        reason = routing["reason"].lower()
-        assert "genuine" in reason or "concern" in reason or "help" in reason
-
-    def test_lost_visitor_not_dismissed(self, lost_visitor_family_fixture):
-        """Lost visitor should NOT be dismissed or ignored."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        action = routing["action"].lower()
-        # Should never have these
-        assert "ignore" not in action
-        assert "dismiss" not in action
-
-    def test_lost_visitor_receives_empathetic_response(self, lost_visitor_family_fixture):
-        """Routing should indicate empathetic, helpful response."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        reason = routing["reason"].lower()
-        # Should acknowledge they have a real concern
-        assert any(
-            word in reason
-            for word in ["genuine", "concern", "help", "empathi", "resource"]
+    def test_bug_vs_feature_different_teams(self):
+        _, bug_routing = self._classify_and_route(
+            "The system crashes with a bug error when I try to export."
         )
+        _, feature_routing = self._classify_and_route(
+            "We need the ability to add custom features and enhancements."
+        )
+        assert bug_routing.assigned_team != feature_routing.assigned_team
+
+    def test_complaint_vs_praise_different_sentiment(self):
+        complaint_cls, _ = self._classify_and_route(
+            "Terrible service. I'm frustrated and disappointed."
+        )
+        praise_cls, _ = self._classify_and_route(
+            "Excellent amazing product. I love it."
+        )
+        assert complaint_cls.sentiment.polarity != praise_cls.sentiment.polarity
+
+    def test_high_urgency_vs_low_urgency_different_priority(self):
+        _, high_routing = self._classify_and_route(
+            "CRITICAL: Security breach detected. System is down. This is an emergency."
+        )
+        _, low_routing = self._classify_and_route(
+            "Just sharing some thoughts on the color scheme."
+        )
+        assert high_routing.priority < low_routing.priority  # lower number = higher priority
+
+    def test_lost_customer_gets_escalated(self):
+        _, routing = self._classify_and_route(
+            "We are canceling and switching to a competitor. Looking at alternatives."
+        )
+        assert routing.escalated is True
+
+    def test_simple_question_not_escalated(self):
+        _, routing = self._classify_and_route(
+            "How do I reset my password?"
+        )
+        assert routing.escalated is False
 
 
-class TestClientCareerSecurityPipeline:
-    """Integration test for customer success request (Eval 4)."""
+# ===========================================================================
+# Escalation triggers in full pipeline context
+# ===========================================================================
 
-    def test_client_career_security_end_to_end(self, client_career_security_fixture):
-        """
-        Full pipeline for David Chen, existing Meridian Health customer.
+class TestEscalationInPipeline:
+    """Test that escalation triggers work within the full pipeline."""
 
-        Expected flow:
-        1. Raw input from Slack Connect normalized
-        2. Contact identified as client (customer_since present)
-        3. Classified as customer_success_request with themes 2+3
-        4. Routed to customer_success team (no escalation flag needed)
-        5. Response includes demo support and CEO messaging resources
-        """
-        fixture = client_career_security_fixture
+    def _run_through_router(self, text, channel="website_form"):
+        intake = IntakeAgent()
+        classifier = ClassifierAgent(use_llm=False)
+        router = RouterAgent()
 
-        # Stage 1: Input validation
-        assert fixture["raw_input"]
-        assert fixture["channel"] == "slack"
+        item = intake.normalize_feedback({"id": "esc_test", "text": text}, channel)
+        classification = classifier.classify(item)
+        item.classification = classification
+        return router.route(item)
 
-        # Stage 2: Contact identification
-        metadata = fixture["metadata"]
-        assert metadata.get("slack_channel_type") == "slack_connect"
-        contact = metadata["contact"]
-        assert contact["name"] == "David Chen"
-        assert "customer_since" in contact
-        assert contact["months_active"] == 3
+    def test_security_mention_triggers_escalation(self):
+        decision = self._run_through_router(
+            "We found a security vulnerability in the login endpoint."
+        )
+        assert decision.escalated is True
 
-        # Stage 3: Classification
-        classification = fixture["expected_classification"]
-        assert classification["contact_type"] == "client"
-        assert classification["category"] == "customer_success_request"
-        assert 2 in classification["themes"]  # Career Security
-        assert 3 in classification["themes"]  # Learning Curve
-        assert classification["sentiment"] == "positive"
+    def test_executive_mention_triggers_escalation(self):
+        decision = self._run_through_router(
+            "Our CEO is concerned about the product roadmap."
+        )
+        assert decision.escalated is True
 
-        # Stage 4: Routing
-        routing = fixture["expected_routing"]
-        assert routing["team"] == "customer_success"
-        # May or may not have escalation flag, but should have sub_team
-        assert routing.get("sub_team") == "enterprise" or routing["team"] == "customer_success"
+    def test_churn_language_triggers_escalation(self):
+        decision = self._run_through_router(
+            "We are going to cancel our subscription and switch to Competitor X."
+        )
+        assert decision.escalated is True
 
-        # Stage 5: Response metadata
-        assert "demo" in routing["reason"].lower() or "support" in routing["reason"].lower()
+    def test_high_intensity_negative_triggers_escalation(self):
+        decision = self._run_through_router(
+            "I absolutely hate this terrible product. It's the worst thing ever. "
+            "Completely useless and totally broken. Never works."
+        )
+        assert decision.escalated is True
 
-    def test_client_career_security_has_existing_relationship(
-        self, client_career_security_fixture
-    ):
-        """Should recognize this is an existing customer."""
-        contact = client_career_security_fixture["metadata"]["contact"]
-        assert "customer_since" in contact
-        assert contact["months_active"] == 3
+    def test_positive_simple_feedback_no_escalation(self):
+        decision = self._run_through_router(
+            "Thanks for the update, the new color scheme looks nice."
+        )
+        assert decision.escalated is False
 
-    def test_client_gets_cs_support(self, client_career_security_fixture):
-        """Should route to customer success, not sales."""
-        routing = client_career_security_fixture["expected_routing"]
-        assert routing["team"] == "customer_success"
+    def test_contract_renewal_concern_triggers_escalation(self):
+        decision = self._run_through_router(
+            "Our contract renewal is coming up and we have major concerns about the product."
+        )
+        assert decision.escalated is True
 
 
-class TestAllThemesFinancialPipeline:
-    """Integration test for multi-theme financial advisor (Eval 5)."""
+# ===========================================================================
+# Concierge pipeline integration
+# ===========================================================================
 
-    def test_all_themes_end_to_end(self, all_themes_financial_fixture):
-        """
-        Full pipeline for Robert Tran, financial advisor (all themes).
+class TestConciergePipelineIntegration:
+    """Test concierge agent works within pipeline context."""
 
-        Expected flow:
-        1. Raw input from product page normalized
-        2. Contact identified as prospect
-        3. Classified as product_inquiry with all themes 1-5
-        4. Escalated to sales due to perfect ICP fit + high-value opportunity
-        5. Response includes personalized position on productivity, career security,
-           ease of use, compliance, and family/personal impact
-        """
-        fixture = all_themes_financial_fixture
+    def test_lost_visitor_gets_concierge_response(self):
+        intake = IntakeAgent()
+        concierge = ConciergeAgent()
 
-        # Stage 1: Input validation
-        assert fixture["raw_input"]
-        assert fixture["channel"] == "website"
+        raw = {
+            "id": "visitor_001",
+            "text": "I'm confused and lost. I can't find what I need. Help please.",
+            "name": "Lost Visitor",
+        }
+        item = intake.normalize_feedback(raw, "website_form")
 
-        # Stage 2: Contact identification
-        contact = fixture["metadata"]["contact"]
-        assert contact["name"] == "Robert Tran"
-        assert contact["age"] == 54
-        assert contact["company"] == "PNW Financial Advisors"
-        assert contact["years_in_industry"] == 28
+        response = concierge.handle_lost_visitor(item)
+        assert response.should_escalate is False
+        assert "Lost Visitor" in response.message
 
-        # Stage 3: Classification
-        classification = fixture["expected_classification"]
-        assert classification["contact_type"] == "prospect"
-        assert classification["category"] == "product_inquiry"
-        # ALL FIVE themes should be present
-        themes = classification["themes"]
-        assert 1 in themes  # Productivity
-        assert 2 in themes  # Career Security
-        assert 3 in themes  # Learning Curve
-        assert 4 in themes  # Privacy
-        assert 5 in themes  # Family
-        assert classification["icp_fit"] == "perfect"
+    def test_frustrated_visitor_gets_escalation(self):
+        intake = IntakeAgent()
+        concierge = ConciergeAgent()
 
-        # Stage 4: Routing
-        routing = fixture["expected_routing"]
-        assert routing["team"] == "sales"
-        assert routing["escalated"] is True
+        raw = {
+            "id": "visitor_002",
+            "text": "I hate this terrible useless website! I'm so angry and frustrated!",
+            "name": "Angry Visitor",
+        }
+        item = intake.normalize_feedback(raw, "website_form")
 
-        # Stage 5: Response metadata
-        reason = routing["reason"].lower()
-        assert "icp" in reason or "perfect" in reason or "high-value" in reason
-
-    def test_all_themes_five_themes_detected(self, all_themes_financial_fixture):
-        """All five themes must be present."""
-        themes = all_themes_financial_fixture["expected_classification"]["themes"]
-        assert len(themes) == 5, f"Expected 5 themes, got {len(themes)}: {themes}"
-        assert set(themes) == {1, 2, 3, 4, 5}
-
-    def test_all_themes_perfect_icp_fit(self, all_themes_financial_fixture):
-        """Financial advisor should be marked as perfect ICP fit."""
-        icp_fit = all_themes_financial_fixture["expected_classification"]["icp_fit"]
-        assert icp_fit == "perfect"
-
-    def test_all_themes_mixed_sentiment_acknowledged(self, all_themes_financial_fixture):
-        """Sentiment should reflect both concern and openness."""
-        sentiment = all_themes_financial_fixture["expected_classification"]["sentiment"]
-        # Could be "mixed_concerned_but_seeking" or contain both terms
-        assert "concern" in sentiment.lower() or "mixed" in sentiment.lower()
+        response = concierge.handle_lost_visitor(item)
+        assert response.should_escalate is True
+        assert "Angry Visitor" in response.message
 
 
-class TestPipelineInvariants:
-    """Test invariants that should hold across all pipeline tests."""
+# ===========================================================================
+# Website form pipeline integration
+# ===========================================================================
 
-    def test_all_have_raw_input(
-        self,
-        prospect_productivity_fixture,
-        privacy_healthcare_fixture,
-        lost_visitor_family_fixture,
-        client_career_security_fixture,
-        all_themes_financial_fixture,
-    ):
-        """All fixtures should have raw_input."""
-        for fixture in [
-            prospect_productivity_fixture,
-            privacy_healthcare_fixture,
-            lost_visitor_family_fixture,
-            client_career_security_fixture,
-            all_themes_financial_fixture,
-        ]:
-            assert fixture["raw_input"]
-            assert isinstance(fixture["raw_input"], str)
-            assert len(fixture["raw_input"]) > 10
+class TestWebsiteFormPipelineIntegration:
+    """Test full pipeline from website form handler through routing."""
 
-    def test_all_have_classification(
-        self,
-        prospect_productivity_fixture,
-        privacy_healthcare_fixture,
-        lost_visitor_family_fixture,
-        client_career_security_fixture,
-        all_themes_financial_fixture,
-    ):
-        """All fixtures should have complete classification."""
-        for fixture in [
-            prospect_productivity_fixture,
-            privacy_healthcare_fixture,
-            lost_visitor_family_fixture,
-            client_career_security_fixture,
-            all_themes_financial_fixture,
-        ]:
-            classification = fixture["expected_classification"]
-            assert "category" in classification
-            assert "themes" in classification
-            assert "sentiment" in classification
-            assert "contact_type" in classification
-            assert "urgency" in classification
+    def test_website_form_full_pipeline(self):
+        from src.channels.website.webhook import WebsiteWebhookHandler
 
-    def test_all_have_routing(
-        self,
-        prospect_productivity_fixture,
-        privacy_healthcare_fixture,
-        lost_visitor_family_fixture,
-        client_career_security_fixture,
-        all_themes_financial_fixture,
-    ):
-        """All fixtures should have complete routing."""
-        for fixture in [
-            prospect_productivity_fixture,
-            privacy_healthcare_fixture,
-            lost_visitor_family_fixture,
-            client_career_security_fixture,
-            all_themes_financial_fixture,
-        ]:
-            routing = fixture["expected_routing"]
-            assert "action" in routing
-            assert "team" in routing
-            assert "escalated" in routing
-            assert "reason" in routing
+        handler = WebsiteWebhookHandler()
+        classifier = ClassifierAgent(use_llm=False)
+        router = RouterAgent()
+        responder = ResponderAgent()
+
+        form_data = {
+            "name": "Pipeline User",
+            "email": "pipeline@example.com",
+            "message": "The dashboard has a bug and keeps crashing with error messages.",
+            "page_url": "https://example.com/dashboard",
+        }
+
+        # Step 1: Webhook handler creates FeedbackItem
+        item = handler.handle_form_submission(form_data)
+        assert isinstance(item, FeedbackItem)
+
+        # Step 2: Classify
+        classification = classifier.classify(item)
+        item.classification = classification
+
+        # Step 3: Route
+        decision = router.route(item)
+        assert decision.assigned_team == "support"
+
+        # Step 4: Respond
+        response = responder.generate_response(item, decision)
+        assert isinstance(response, FeedbackResponse)
 
 
-class TestChannelHandling:
-    """Test that different channels are handled correctly."""
+# ===========================================================================
+# Slack pipeline integration
+# ===========================================================================
 
-    def test_website_fixtures(
-        self, prospect_productivity_fixture, lost_visitor_family_fixture, all_themes_financial_fixture
-    ):
-        """Website fixtures should have page_url in metadata."""
-        for fixture in [prospect_productivity_fixture, lost_visitor_family_fixture, all_themes_financial_fixture]:
-            assert fixture["channel"] == "website"
-            assert "page_url" in fixture["metadata"]
+class TestSlackPipelineIntegration:
+    """Test full pipeline from Slack event handler through routing."""
 
-    def test_slack_fixtures(self, privacy_healthcare_fixture, client_career_security_fixture):
-        """Slack fixtures should have Slack-specific metadata."""
-        for fixture in [privacy_healthcare_fixture, client_career_security_fixture]:
-            assert fixture["channel"] == "slack"
-            metadata = fixture["metadata"]
-            assert "slack_channel" in metadata
-            assert "slack_user_id" in metadata
+    def test_slack_message_full_pipeline(self):
+        from src.channels.slack.events import SlackEventHandler
 
+        handler = SlackEventHandler()
+        classifier = ClassifierAgent(use_llm=False)
+        router = RouterAgent()
+        responder = ResponderAgent()
 
-class TestResponseGeneration:
-    """Test that response generation expectations are met."""
+        event_data = {
+            "channel": "feedback",
+            "channel_name": "feedback",
+            "ts": "12345.67890",
+            "text": "We need a new feature for bulk data export. Please add this capability.",
+            "user": "USLACK",
+        }
 
-    def test_lost_visitor_gets_concierge_response(self, lost_visitor_family_fixture):
-        """Lost visitor should get concierge response action."""
-        routing = lost_visitor_family_fixture["expected_routing"]
-        assert "concierge" in routing["action"].lower()
+        # Step 1: Slack handler creates FeedbackItem
+        item = handler.handle_message_event(event_data)
+        assert isinstance(item, FeedbackItem)
 
-    def test_prospects_get_sales_routing(
-        self, prospect_productivity_fixture, privacy_healthcare_fixture, all_themes_financial_fixture
-    ):
-        """Prospects should be routed to sales."""
-        for fixture in [prospect_productivity_fixture, privacy_healthcare_fixture, all_themes_financial_fixture]:
-            routing = fixture["expected_routing"]
-            assert routing["team"] == "sales"
+        # Step 2: Classify
+        classification = classifier.classify(item)
+        item.classification = classification
 
-    def test_client_gets_cs_routing(self, client_career_security_fixture):
-        """Existing client should route to customer success."""
-        routing = client_career_security_fixture["expected_routing"]
-        assert routing["team"] == "customer_success"
+        # Step 3: Route
+        decision = router.route(item)
+        assert decision.assigned_team == "product"
+        assert decision.channel == "slack"
+
+        # Step 4: Respond
+        response = responder.generate_response(item, decision)
+        assert isinstance(response, FeedbackResponse)

@@ -1,316 +1,567 @@
-"""Unit tests for schema validation."""
-import json
+"""Unit tests for all Pydantic schema models in src/schemas/."""
+
 import pytest
-from pathlib import Path
+from datetime import datetime
+from pydantic import ValidationError
 
-# Load test fixtures
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-
-
-@pytest.fixture
-def all_fixture_files():
-    """Get all fixture files."""
-    return [
-        "prospect_productivity.json",
-        "privacy_healthcare.json",
-        "lost_visitor_family.json",
-        "client_career_security.json",
-        "all_themes_financial.json",
-    ]
-
-
-@pytest.fixture(params=[
-    "prospect_productivity.json",
-    "privacy_healthcare.json",
-    "lost_visitor_family.json",
-    "client_career_security.json",
-    "all_themes_financial.json",
-])
-def fixture_content(request):
-    """Parametrized fixture for all test data."""
-    with open(FIXTURES_DIR / request.param) as f:
-        return json.load(f)
+from src.schemas.feedback import (
+    FeedbackItem,
+    FeedbackSource,
+    FeedbackSourceEnum,
+    FeedbackContact,
+    ContactTypeEnum,
+    FeedbackContent,
+    FeedbackClassification,
+    FeedbackRouting,
+    FeedbackResponse,
+    FeedbackLifecycle,
+    FeedbackStatusEnum,
+    SentimentScore,
+    PolarityEnum,
+    UrgencyEnum,
+    CategoryEnum,
+    ResponseTypeEnum,
+)
+from src.schemas.classification import ClassificationRequest, ClassificationOutput
+from src.schemas.routing import RoutingRequest, RoutingDecision
+from src.schemas.response import ResponseRequest, ResponseOutput
 
 
-class TestFeedbackItemSchema:
-    """Test FeedbackItem schema validation."""
+# ---------------------------------------------------------------------------
+# FeedbackSource tests
+# ---------------------------------------------------------------------------
 
-    def test_fixture_structure_valid(self, fixture_content):
-        """Fixture should have all required top-level fields."""
-        required_fields = {
-            "raw_input",
-            "channel",
-            "metadata",
-            "expected_classification",
-            "expected_routing",
-        }
-        assert required_fields.issubset(
-            fixture_content.keys()
-        ), f"Missing required fields: {required_fields - set(fixture_content.keys())}"
+class TestFeedbackSource:
+    """Test FeedbackSource model."""
 
-    def test_raw_input_not_empty(self, fixture_content):
-        """raw_input should be non-empty string."""
-        raw_input = fixture_content["raw_input"]
-        assert isinstance(raw_input, str), "raw_input must be string"
-        assert len(raw_input) > 0, "raw_input cannot be empty"
+    def test_creation_with_all_fields(self):
+        source = FeedbackSource(
+            channel=FeedbackSourceEnum.WEBSITE_FORM,
+            platform="contact_form_v1",
+            raw_id="form_12345",
+            context={"page_url": "https://example.com/pricing"},
+        )
+        assert source.channel == FeedbackSourceEnum.WEBSITE_FORM
+        assert source.platform == "contact_form_v1"
+        assert source.raw_id == "form_12345"
+        assert source.context == {"page_url": "https://example.com/pricing"}
 
-    def test_channel_valid_value(self, fixture_content):
-        """channel should be 'website' or 'slack'."""
-        channel = fixture_content["channel"]
-        valid_channels = {"website", "slack"}
-        assert (
-            channel in valid_channels
-        ), f"channel must be one of {valid_channels}, got {channel}"
+    def test_creation_with_minimal_fields(self):
+        source = FeedbackSource(
+            channel=FeedbackSourceEnum.SLACK,
+            raw_id="slack_msg_001",
+        )
+        assert source.channel == FeedbackSourceEnum.SLACK
+        assert source.platform is None
+        assert source.context == {}
 
-    def test_metadata_is_dict(self, fixture_content):
-        """metadata should be a dictionary."""
-        metadata = fixture_content["metadata"]
-        assert isinstance(metadata, dict), "metadata must be a dictionary"
+    def test_all_channel_enum_values(self):
+        for channel in FeedbackSourceEnum:
+            source = FeedbackSource(channel=channel, raw_id="test")
+            assert source.channel == channel
 
-    def test_expected_classification_is_dict(self, fixture_content):
-        """expected_classification should be a dictionary."""
-        classification = fixture_content["expected_classification"]
-        assert isinstance(
-            classification, dict
-        ), "expected_classification must be a dictionary"
+    def test_invalid_channel_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackSource(channel="invalid_channel", raw_id="test")
 
-    def test_expected_routing_is_dict(self, fixture_content):
-        """expected_routing should be a dictionary."""
-        routing = fixture_content["expected_routing"]
-        assert isinstance(routing, dict), "expected_routing must be a dictionary"
+    def test_missing_required_channel_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackSource(raw_id="test")
+
+    def test_missing_required_raw_id_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackSource(channel=FeedbackSourceEnum.EMAIL)
 
 
-class TestMetadataSchema:
-    """Test metadata field validation."""
+# ---------------------------------------------------------------------------
+# FeedbackContact tests
+# ---------------------------------------------------------------------------
 
-    def test_website_metadata_has_url(self):
-        """Website feedback should have page_url in metadata."""
-        with open(FIXTURES_DIR / "prospect_productivity.json") as f:
-            fixture = json.load(f)
-        metadata = fixture["metadata"]
-        assert "page_url" in metadata or fixture["channel"] == "slack"
+class TestFeedbackContact:
+    """Test FeedbackContact model."""
 
-    def test_slack_metadata_has_channel(self):
-        """Slack feedback should have slack_channel in metadata."""
-        with open(FIXTURES_DIR / "privacy_healthcare.json") as f:
-            fixture = json.load(f)
-        metadata = fixture["metadata"]
-        if fixture["channel"] == "slack":
-            assert "slack_channel" in metadata, "Slack feedback must have slack_channel"
+    def test_creation_with_all_fields(self):
+        contact = FeedbackContact(
+            type=ContactTypeEnum.PROSPECT,
+            id="cont_123",
+            name="John Doe",
+            account="acct_456",
+            history={"previous_inquiries": 2},
+        )
+        assert contact.type == ContactTypeEnum.PROSPECT
+        assert contact.id == "cont_123"
+        assert contact.name == "John Doe"
+        assert contact.account == "acct_456"
+        assert contact.history == {"previous_inquiries": 2}
 
-    def test_contact_info_present(self, fixture_content):
-        """Metadata should have contact information."""
-        metadata = fixture_content["metadata"]
-        assert "contact" in metadata, "metadata must have contact information"
-        contact = metadata["contact"]
-        assert isinstance(contact, dict), "contact must be a dictionary"
+    def test_creation_with_minimal_fields(self):
+        contact = FeedbackContact(type=ContactTypeEnum.UNKNOWN)
+        assert contact.type == ContactTypeEnum.UNKNOWN
+        assert contact.id is None
+        assert contact.name is None
+        assert contact.account is None
+        assert contact.history == {}
 
-    def test_contact_has_name(self, fixture_content):
-        """Contact should have a name (or 'Unknown' for lost visitors)."""
-        contact = fixture_content["metadata"]["contact"]
-        assert "name" in contact, "contact must have a name"
-        name = contact.get("name")
-        # Name can be "Unknown Parent" or actual name, but should exist
-        assert name is not None and len(str(name)) > 0
+    def test_all_contact_type_enum_values(self):
+        for contact_type in ContactTypeEnum:
+            contact = FeedbackContact(type=contact_type)
+            assert contact.type == contact_type
 
-    def test_contact_has_role_or_context(self, fixture_content):
-        """Contact should have role or context field."""
-        contact = fixture_content["metadata"]["contact"]
-        assert (
-            "role" in contact or "context" in contact
-        ), "contact must have role or context"
-
-    def test_theme_list_in_classification(self, fixture_content):
-        """Classification should have themes list."""
-        classification = fixture_content["expected_classification"]
-        assert "themes" in classification, "classification must have themes"
-        themes = classification["themes"]
-        assert isinstance(themes, list), "themes must be a list"
-        assert len(themes) > 0, "themes list cannot be empty"
+    def test_invalid_contact_type_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackContact(type="invalid_type")
 
 
-class TestClassificationSchema:
-    """Test expected_classification field validation."""
+# ---------------------------------------------------------------------------
+# FeedbackContent tests
+# ---------------------------------------------------------------------------
 
-    def test_category_present(self, fixture_content):
-        """Classification must have category."""
-        classification = fixture_content["expected_classification"]
-        assert "category" in classification, "classification must have category"
-        category = classification["category"]
-        assert isinstance(category, str) and len(category) > 0
+class TestFeedbackContent:
+    """Test FeedbackContent model."""
 
-    def test_valid_categories(self, fixture_content):
-        """Category values should be reasonable feedback categories."""
-        classification = fixture_content["expected_classification"]
-        category = classification["category"]
-        # Valid categories based on README
-        valid_categories = {
-            "product_inquiry",
-            "compliance_security_inquiry",
-            "lost_visitor_inquiry",
-            "customer_success_request",
-            "feature_request",
-            "bug_report",
-            "pricing_question",
-        }
-        # More flexible: just check it's a reasonable category name
-        assert len(category) > 0 and "_" in category or "success" in category
+    def test_creation_with_all_fields(self):
+        content = FeedbackContent(
+            raw_text="Your pricing is too high",
+            summary="Customer concerned about pricing",
+            language="en",
+        )
+        assert content.raw_text == "Your pricing is too high"
+        assert content.summary == "Customer concerned about pricing"
+        assert content.language == "en"
 
-    def test_themes_are_integers_1_to_5(self, fixture_content):
-        """Themes should be integers from 1-5."""
-        classification = fixture_content["expected_classification"]
-        themes = classification["themes"]
-        for theme in themes:
-            assert isinstance(theme, int), f"theme must be int, got {type(theme)}"
-            assert 1 <= theme <= 5, f"theme must be 1-5, got {theme}"
+    def test_creation_with_minimal_fields(self):
+        content = FeedbackContent(raw_text="Some feedback")
+        assert content.raw_text == "Some feedback"
+        assert content.summary is None
+        assert content.language == "en"  # default
 
-    def test_sentiment_valid(self, fixture_content):
-        """Sentiment should be a valid sentiment value."""
-        classification = fixture_content["expected_classification"]
-        sentiment = classification["sentiment"]
-        valid_sentiments = {
-            "positive",
-            "neutral",
-            "negative",
-            "concerned",
-            "mixed_concerned_but_seeking",
-        }
-        # Allow for variations in naming
-        assert isinstance(sentiment, str) and len(sentiment) > 0
-
-    def test_contact_type_valid(self, fixture_content):
-        """Contact type should be valid."""
-        classification = fixture_content["expected_classification"]
-        contact_type = classification["contact_type"]
-        valid_types = {"prospect", "client", "lost_visitor", "internal", "unknown"}
-        assert contact_type in valid_types, f"Invalid contact_type: {contact_type}"
-
-    def test_urgency_valid(self, fixture_content):
-        """Urgency should be low, medium, or high."""
-        classification = fixture_content["expected_classification"]
-        urgency = classification["urgency"]
-        valid_urgencies = {"low", "medium", "high"}
-        assert urgency in valid_urgencies, f"Invalid urgency: {urgency}"
+    def test_missing_raw_text_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackContent()
 
 
-class TestRoutingSchema:
-    """Test expected_routing field validation."""
+# ---------------------------------------------------------------------------
+# SentimentScore tests
+# ---------------------------------------------------------------------------
 
-    def test_action_present(self, fixture_content):
-        """Routing must have action."""
-        routing = fixture_content["expected_routing"]
-        assert "action" in routing, "routing must have action"
+class TestSentimentScore:
+    """Test SentimentScore model."""
 
-    def test_team_present(self, fixture_content):
-        """Routing must have team assignment."""
-        routing = fixture_content["expected_routing"]
-        assert "team" in routing, "routing must have team"
-        team = routing["team"]
-        assert isinstance(team, str) and len(team) > 0
+    def test_creation_with_valid_values(self):
+        score = SentimentScore(
+            polarity=PolarityEnum.NEGATIVE,
+            intensity=0.85,
+            urgency=UrgencyEnum.HIGH,
+        )
+        assert score.polarity == PolarityEnum.NEGATIVE
+        assert score.intensity == 0.85
+        assert score.urgency == UrgencyEnum.HIGH
 
-    def test_escalated_is_boolean(self, fixture_content):
-        """escalated field must be boolean."""
-        routing = fixture_content["expected_routing"]
-        assert "escalated" in routing, "routing must have escalated field"
-        assert isinstance(
-            routing["escalated"], bool
-        ), "escalated must be boolean"
+    def test_intensity_at_boundaries(self):
+        low = SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.0, urgency=UrgencyEnum.LOW)
+        assert low.intensity == 0.0
 
-    def test_reason_present(self, fixture_content):
-        """Routing must include reason."""
-        routing = fixture_content["expected_routing"]
-        assert "reason" in routing, "routing must have reason"
-        reason = routing["reason"]
-        assert isinstance(reason, str) and len(reason) > 0, "reason must be non-empty string"
+        high = SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=1.0, urgency=UrgencyEnum.LOW)
+        assert high.intensity == 1.0
 
-    def test_valid_teams(self, fixture_content):
-        """Team assignments should be reasonable."""
-        routing = fixture_content["expected_routing"]
-        team = routing["team"]
-        valid_teams = {
-            "sales",
-            "customer_success",
-            "concierge",
-            "support",
-            "product",
-            "engineering",
-        }
-        assert (
-            team in valid_teams
-        ), f"Invalid team: {team} (must be one of {valid_teams})"
+    def test_intensity_above_one_raises_error(self):
+        with pytest.raises(ValidationError):
+            SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=1.1, urgency=UrgencyEnum.LOW)
 
-    def test_sub_team_optional(self, fixture_content):
-        """sub_team is optional but if present should be string."""
-        routing = fixture_content["expected_routing"]
-        if "sub_team" in routing:
-            assert isinstance(
-                routing["sub_team"], str
-            ), "sub_team must be string"
+    def test_intensity_below_zero_raises_error(self):
+        with pytest.raises(ValidationError):
+            SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=-0.1, urgency=UrgencyEnum.LOW)
+
+    def test_all_polarity_values(self):
+        for polarity in PolarityEnum:
+            score = SentimentScore(polarity=polarity, intensity=0.5, urgency=UrgencyEnum.MEDIUM)
+            assert score.polarity == polarity
+
+    def test_all_urgency_values(self):
+        for urgency in UrgencyEnum:
+            score = SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=urgency)
+            assert score.urgency == urgency
+
+    def test_invalid_polarity_raises_error(self):
+        with pytest.raises(ValidationError):
+            SentimentScore(polarity="very_bad", intensity=0.5, urgency=UrgencyEnum.LOW)
 
 
-class TestSchemaIntegrity:
-    """Test relationships between fields across schemas."""
+# ---------------------------------------------------------------------------
+# FeedbackClassification tests
+# ---------------------------------------------------------------------------
 
-    def test_lost_visitor_consistent(self):
-        """Lost visitor fixture should have consistent lost_visitor indicators."""
-        with open(FIXTURES_DIR / "lost_visitor_family.json") as f:
-            fixture = json.load(f)
-        classification = fixture["expected_classification"]
-        routing = fixture["expected_routing"]
-        # Should be marked as lost_visitor in contact type
-        assert classification["contact_type"] == "lost_visitor"
-        # Should route to concierge
-        assert routing["team"] == "concierge"
+class TestFeedbackClassification:
+    """Test FeedbackClassification model."""
 
-    def test_client_consistent(self):
-        """Client fixture should have consistent client indicators."""
-        with open(FIXTURES_DIR / "client_career_security.json") as f:
-            fixture = json.load(f)
-        classification = fixture["expected_classification"]
-        # Should be marked as client
-        assert classification["contact_type"] == "client"
-        # Should have customer_since in metadata
-        metadata = fixture["metadata"]["contact"]
-        assert "customer_since" in metadata
+    def test_creation_with_all_fields(self):
+        classification = FeedbackClassification(
+            category=CategoryEnum.COMPLAINT,
+            subcategory="pricing",
+            sentiment=SentimentScore(
+                polarity=PolarityEnum.NEGATIVE,
+                intensity=0.75,
+                urgency=UrgencyEnum.HIGH,
+            ),
+            business_impact="May affect renewal decision",
+            confidence=0.92,
+            themes=["pricing_sensitivity", "competitive_pressure"],
+        )
+        assert classification.category == CategoryEnum.COMPLAINT
+        assert classification.subcategory == "pricing"
+        assert classification.sentiment.polarity == PolarityEnum.NEGATIVE
+        assert classification.business_impact == "May affect renewal decision"
+        assert classification.confidence == 0.92
+        assert len(classification.themes) == 2
 
-    def test_prospect_consistent(self):
-        """Prospect fixtures should have consistent prospect indicators."""
-        prospect_files = [
-            "prospect_productivity.json",
-            "privacy_healthcare.json",
-            "all_themes_financial.json",
-        ]
-        for fname in prospect_files:
-            with open(FIXTURES_DIR / fname) as f:
-                fixture = json.load(f)
-            classification = fixture["expected_classification"]
-            assert classification["contact_type"] == "prospect"
+    def test_creation_with_minimal_fields(self):
+        classification = FeedbackClassification(
+            category=CategoryEnum.QUESTION,
+            sentiment=SentimentScore(
+                polarity=PolarityEnum.NEUTRAL,
+                intensity=0.5,
+                urgency=UrgencyEnum.LOW,
+            ),
+            business_impact="Standard review required",
+            confidence=0.5,
+        )
+        assert classification.category == CategoryEnum.QUESTION
+        assert classification.subcategory is None
+        assert classification.themes == []
 
-    def test_icp_fit_reasonable(self, fixture_content):
-        """ICP fit should match contact type."""
-        classification = fixture_content["expected_classification"]
-        contact_type = classification["contact_type"]
-        icp_fit = classification.get("icp_fit")
-        # Lost visitors should have not_applicable
-        if contact_type == "lost_visitor":
-            assert icp_fit == "not_applicable"
-        # Prospects and clients should have an ICP fit
-        elif contact_type in ("prospect", "client"):
-            assert icp_fit in ("strong", "perfect", "moderate")
+    def test_confidence_at_boundaries(self):
+        low = FeedbackClassification(
+            category=CategoryEnum.BUG,
+            sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+            business_impact="Low",
+            confidence=0.0,
+        )
+        assert low.confidence == 0.0
+
+        high = FeedbackClassification(
+            category=CategoryEnum.BUG,
+            sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+            business_impact="Low",
+            confidence=1.0,
+        )
+        assert high.confidence == 1.0
+
+    def test_confidence_out_of_range_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackClassification(
+                category=CategoryEnum.BUG,
+                sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+                business_impact="Low",
+                confidence=1.5,
+            )
+
+    def test_all_category_enum_values(self):
+        for category in CategoryEnum:
+            classification = FeedbackClassification(
+                category=category,
+                sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+                business_impact="Standard",
+                confidence=0.5,
+            )
+            assert classification.category == category
+
+    def test_invalid_category_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackClassification(
+                category="not_a_real_category",
+                sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+                business_impact="N/A",
+                confidence=0.5,
+            )
 
 
-class TestFixtureLoading:
-    """Test that all fixtures load correctly."""
+# ---------------------------------------------------------------------------
+# FeedbackRouting tests
+# ---------------------------------------------------------------------------
 
-    def test_all_fixtures_load(self, all_fixture_files):
-        """All fixture files should load as valid JSON."""
-        for fixture_name in all_fixture_files:
-            fixture_path = FIXTURES_DIR / fixture_name
-            assert fixture_path.exists(), f"Fixture not found: {fixture_name}"
-            with open(fixture_path) as f:
-                data = json.load(f)
-                assert isinstance(data, dict), f"{fixture_name} not a JSON object"
+class TestFeedbackRouting:
+    """Test FeedbackRouting model."""
 
-    def test_fixture_count(self, all_fixture_files):
-        """Should have exactly 5 fixtures."""
-        assert len(all_fixture_files) == 5, f"Expected 5 fixtures, got {len(all_fixture_files)}"
+    def test_creation_with_all_fields(self):
+        routing = FeedbackRouting(
+            action="route_to_sales",
+            assigned_team="sales",
+            assigned_individual="sarah_johnson",
+            channel="email",
+            escalated=True,
+            escalation_reason="High-value prospect with competitive threat",
+            recommended_action="Schedule call with pricing team",
+        )
+        assert routing.action == "route_to_sales"
+        assert routing.assigned_team == "sales"
+        assert routing.assigned_individual == "sarah_johnson"
+        assert routing.channel == "email"
+        assert routing.escalated is True
+        assert routing.escalation_reason == "High-value prospect with competitive threat"
+
+    def test_creation_with_minimal_fields(self):
+        routing = FeedbackRouting(
+            action="route_to_support",
+            channel="email",
+            recommended_action="Review and classify",
+        )
+        assert routing.action == "route_to_support"
+        assert routing.assigned_team is None
+        assert routing.assigned_individual is None
+        assert routing.escalated is False  # default
+        assert routing.escalation_reason is None
+
+    def test_missing_required_fields_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackRouting(action="route_to_support")  # missing channel and recommended_action
+
+
+# ---------------------------------------------------------------------------
+# FeedbackResponse tests
+# ---------------------------------------------------------------------------
+
+class TestFeedbackResponse:
+    """Test FeedbackResponse model."""
+
+    def test_creation_with_all_fields(self):
+        response = FeedbackResponse(
+            auto_responded=True,
+            response_text="Thank you for reaching out about pricing.",
+            response_type=ResponseTypeEnum.AUTO_ACKNOWLEDGE,
+        )
+        assert response.auto_responded is True
+        assert response.response_text == "Thank you for reaching out about pricing."
+        assert response.response_type == ResponseTypeEnum.AUTO_ACKNOWLEDGE
+
+    def test_creation_with_minimal_fields(self):
+        response = FeedbackResponse(
+            response_type=ResponseTypeEnum.FLAG_HUMAN,
+        )
+        assert response.auto_responded is False  # default
+        assert response.response_text is None
+        assert response.response_type == ResponseTypeEnum.FLAG_HUMAN
+
+    def test_all_response_type_enum_values(self):
+        for rtype in ResponseTypeEnum:
+            response = FeedbackResponse(response_type=rtype)
+            assert response.response_type == rtype
+
+    def test_invalid_response_type_raises_error(self):
+        with pytest.raises(ValidationError):
+            FeedbackResponse(response_type="invalid_response_type")
+
+
+# ---------------------------------------------------------------------------
+# FeedbackLifecycle tests
+# ---------------------------------------------------------------------------
+
+class TestFeedbackLifecycle:
+    """Test FeedbackLifecycle model."""
+
+    def test_creation(self):
+        lifecycle = FeedbackLifecycle(status=FeedbackStatusEnum.RECEIVED)
+        assert lifecycle.status == FeedbackStatusEnum.RECEIVED
+        assert lifecycle.loop_closed is False
+
+    def test_all_status_values(self):
+        for status in FeedbackStatusEnum:
+            lifecycle = FeedbackLifecycle(status=status)
+            assert lifecycle.status == status
+
+    def test_loop_closed(self):
+        lifecycle = FeedbackLifecycle(status=FeedbackStatusEnum.CLOSED, loop_closed=True)
+        assert lifecycle.loop_closed is True
+
+
+# ---------------------------------------------------------------------------
+# FeedbackItem tests
+# ---------------------------------------------------------------------------
+
+class TestFeedbackItem:
+    """Test FeedbackItem model (top-level composite)."""
+
+    def test_creation_with_all_fields(self, sample_feedback_source, sample_feedback_contact,
+                                      sample_feedback_content, sample_classification):
+        item = FeedbackItem(
+            id="fb_abc123def456",
+            timestamp=datetime(2025, 1, 20, 14, 30, 0),
+            source=sample_feedback_source,
+            contact=sample_feedback_contact,
+            content=sample_feedback_content,
+            classification=sample_classification,
+            routing=FeedbackRouting(
+                action="route_to_sales",
+                channel="email",
+                recommended_action="Follow up",
+            ),
+            response=FeedbackResponse(response_type=ResponseTypeEnum.AUTO_ACKNOWLEDGE),
+            lifecycle=FeedbackLifecycle(status=FeedbackStatusEnum.ROUTED),
+        )
+        assert item.id == "fb_abc123def456"
+        assert item.source.channel == FeedbackSourceEnum.WEBSITE_FORM
+        assert item.contact.type == ContactTypeEnum.PROSPECT
+        assert item.content.raw_text is not None
+        assert item.classification.category == CategoryEnum.FEATURE
+        assert item.routing.action == "route_to_sales"
+        assert item.response.response_type == ResponseTypeEnum.AUTO_ACKNOWLEDGE
+        assert item.lifecycle.status == FeedbackStatusEnum.ROUTED
+
+    def test_creation_with_minimal_fields(self, sample_feedback_source, sample_feedback_contact,
+                                           sample_feedback_content):
+        item = FeedbackItem(
+            id="fb_minimal",
+            source=sample_feedback_source,
+            contact=sample_feedback_contact,
+            content=sample_feedback_content,
+        )
+        assert item.id == "fb_minimal"
+        assert item.classification is None
+        assert item.routing is None
+        assert item.response is None
+        assert item.lifecycle.status == FeedbackStatusEnum.RECEIVED  # default
+
+    def test_timestamp_defaults_to_now(self, sample_feedback_source, sample_feedback_contact,
+                                        sample_feedback_content):
+        item = FeedbackItem(
+            id="fb_ts_test",
+            source=sample_feedback_source,
+            contact=sample_feedback_contact,
+            content=sample_feedback_content,
+        )
+        assert item.timestamp is not None
+        assert isinstance(item.timestamp, datetime)
+
+    def test_missing_required_id_raises_error(self, sample_feedback_source, sample_feedback_contact,
+                                               sample_feedback_content):
+        with pytest.raises(ValidationError):
+            FeedbackItem(
+                source=sample_feedback_source,
+                contact=sample_feedback_contact,
+                content=sample_feedback_content,
+            )
+
+
+# ---------------------------------------------------------------------------
+# ClassificationRequest / ClassificationOutput tests
+# ---------------------------------------------------------------------------
+
+class TestClassificationSchemas:
+    """Test classification request/output schemas."""
+
+    def test_classification_request(self):
+        req = ClassificationRequest(
+            text="This is broken and unusable!",
+            context={"source": "website"},
+        )
+        assert req.text == "This is broken and unusable!"
+        assert req.context == {"source": "website"}
+
+    def test_classification_request_minimal(self):
+        req = ClassificationRequest(text="feedback text")
+        assert req.text == "feedback text"
+        assert req.context == {}
+
+    def test_classification_output(self):
+        output = ClassificationOutput(
+            category=CategoryEnum.BUG,
+            subcategory="ui",
+            sentiment=SentimentScore(
+                polarity=PolarityEnum.NEGATIVE,
+                intensity=0.8,
+                urgency=UrgencyEnum.HIGH,
+            ),
+            business_impact="May impact renewal decision",
+            confidence=0.95,
+            themes=["implementation_friction"],
+            reasoning="Customer explicitly reported a bug with UI",
+        )
+        assert output.category == CategoryEnum.BUG
+        assert output.confidence == 0.95
+        assert output.reasoning == "Customer explicitly reported a bug with UI"
+
+    def test_classification_output_requires_reasoning(self):
+        with pytest.raises(ValidationError):
+            ClassificationOutput(
+                category=CategoryEnum.BUG,
+                sentiment=SentimentScore(polarity=PolarityEnum.NEUTRAL, intensity=0.5, urgency=UrgencyEnum.LOW),
+                business_impact="Low",
+                confidence=0.5,
+                # missing reasoning
+            )
+
+
+# ---------------------------------------------------------------------------
+# RoutingDecision tests
+# ---------------------------------------------------------------------------
+
+class TestRoutingDecisionSchema:
+    """Test RoutingDecision schema model."""
+
+    def test_creation_with_all_fields(self):
+        decision = RoutingDecision(
+            action="route_to_sales",
+            assigned_team="sales",
+            assigned_individual="sales_rep_001",
+            channel="email",
+            escalated=True,
+            escalation_reason="High-value prospect",
+            escalation_trigger="sentiment_intensity_high",
+            recommended_action="Schedule call",
+            response_type="auto_acknowledge",
+            priority=1,
+            rules_applied=["high_value_prospect_escalation"],
+        )
+        assert decision.action == "route_to_sales"
+        assert decision.escalated is True
+        assert decision.priority == 1
+        assert len(decision.rules_applied) == 1
+
+    def test_creation_with_defaults(self):
+        decision = RoutingDecision(
+            action="route_to_support",
+            channel="email",
+            recommended_action="Review",
+            response_type="flag_human",
+        )
+        assert decision.escalated is False
+        assert decision.priority == 3
+        assert decision.rules_applied == []
+        assert decision.escalation_reason is None
+        assert decision.escalation_trigger is None
+
+
+# ---------------------------------------------------------------------------
+# ResponseOutput tests
+# ---------------------------------------------------------------------------
+
+class TestResponseOutputSchema:
+    """Test ResponseOutput schema model."""
+
+    def test_creation_with_all_fields(self):
+        output = ResponseOutput(
+            response_text="Thank you for your feedback.",
+            response_type=ResponseTypeEnum.AUTO_ACKNOWLEDGE,
+            should_auto_send=True,
+            requires_human_review=False,
+            tone="warm_and_professional",
+        )
+        assert output.response_text == "Thank you for your feedback."
+        assert output.should_auto_send is True
+        assert output.requires_human_review is False
+        assert output.tone == "warm_and_professional"
+
+    def test_creation_with_minimal_fields(self):
+        output = ResponseOutput(
+            response_text="Pending review",
+            response_type=ResponseTypeEnum.FLAG_HUMAN,
+            tone="professional",
+        )
+        assert output.should_auto_send is False  # default
+        assert output.requires_human_review is False  # default
+
+    def test_missing_required_fields_raises_error(self):
+        with pytest.raises(ValidationError):
+            ResponseOutput(
+                response_text="Text only",
+                # missing response_type and tone
+            )
