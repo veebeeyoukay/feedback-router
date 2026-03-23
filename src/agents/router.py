@@ -1,5 +1,7 @@
 """Router agent for determining feedback routing."""
 
+from typing import Optional
+
 from src.schemas.feedback import FeedbackItem
 from src.schemas.routing import RoutingDecision
 from src.routing.engine import RoutingEngine
@@ -11,7 +13,7 @@ from src.routing.assignment import TeamAssignmentManager
 class RouterAgent:
     """Routes classified feedback to appropriate teams."""
 
-    def __init__(self, routing_engine: RoutingEngine | None = None):
+    def __init__(self, routing_engine: Optional[RoutingEngine] = None):
         """Initialize router agent.
 
         Args:

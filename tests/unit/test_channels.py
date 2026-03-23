@@ -280,7 +280,7 @@ class TestSlackEventHandlerShouldProcessEvent:
 
     def test_should_not_process_random_channel(self):
         handler = SlackEventHandler()
-        assert handler.should_process_event("random") is False
+        assert not handler.should_process_event("random")
 
     def test_should_process_by_channel_name(self):
         handler = SlackEventHandler()
@@ -288,12 +288,12 @@ class TestSlackEventHandlerShouldProcessEvent:
 
     def test_should_not_process_unknown_id_and_name(self):
         handler = SlackEventHandler()
-        assert handler.should_process_event("C99999", channel_name="general") is False
+        assert not handler.should_process_event("C99999", channel_name="general")
 
     def test_custom_monitored_channels(self):
         handler = SlackEventHandler(monitored_channels=["my-channel", "my-other"])
         assert handler.should_process_event("my-channel") is True
-        assert handler.should_process_event("feedback") is False
+        assert not handler.should_process_event("feedback")
 
 
 class TestSlackEventHandlerAppMention:

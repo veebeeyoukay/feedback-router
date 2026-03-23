@@ -138,7 +138,7 @@ def sample_raw_feedback():
 def sample_raw_website_form():
     """Create a sample raw website form submission."""
     return {
-        "id": "form_001",
+        "form_id": "form_001",
         "name": "John Doe",
         "email": "john@example.com",
         "message": "I have a question about your enterprise plan pricing.",

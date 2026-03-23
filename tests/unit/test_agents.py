@@ -459,17 +459,10 @@ class TestResponderAgent:
 
     def test_unknown_response_type_defaults_to_flag_human(self):
         agent = ResponderAgent()
-        item = self._make_item_with_classification()
-        decision = RoutingDecision(
-            action="route_to_support",
-            assigned_team="support",
-            channel="email",
-            recommended_action="Review",
-            response_type="unknown_type",
-            priority=3,
-        )
-        response = agent.generate_response(item, decision)
-        assert response.response_type == ResponseTypeEnum.FLAG_HUMAN
+        # Test the internal mapping method directly since RoutingDecision
+        # validates response_type via Pydantic enum
+        result = agent._map_response_type("unknown_type")
+        assert result == ResponseTypeEnum.FLAG_HUMAN
 
 
 # ===========================================================================
